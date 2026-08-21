@@ -13,6 +13,7 @@ import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 
 export type MausColor =
   | "green"
@@ -79,6 +80,10 @@ export interface Message {
   /** `setup` marks an error the user fixes by installing or configuring
    * something — the UI offers setup instead of a retry that cannot work. */
   tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  /** user messages sent INTO a running turn (capabilities.queueing): the
+   * model saw it mid-turn, so the transcript marks it — a reader should
+   * know the reply above it may already account for this line */
+  steered?: boolean;
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
@@ -257,6 +262,10 @@ export interface BotRecord {
   notifications: boolean;
   color: MausColor;
   mascotExpression?: MausExpression | null;
+  /** App-owned attachment served as this bot's custom profile image. */
+  avatarUrl?: string;
+  /** Mascot, or the crop applied to avatarUrl. */
+  avatarCrop?: BotAvatarCrop;
   unread: boolean;
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
@@ -459,6 +468,15 @@ export class Store {
       b.activity = "idle";
       if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
+        botsMigrated = true;
+      }
+      const avatar = botAvatarProfile(b);
+      if (b.avatarUrl !== undefined && avatar.avatarUrl !== b.avatarUrl) {
+        delete b.avatarUrl;
+        botsMigrated = true;
+      }
+      if (b.avatarCrop !== undefined && avatar.avatarCrop !== b.avatarCrop) {
+        delete b.avatarCrop;
         botsMigrated = true;
       }
     }

@@ -6,7 +6,7 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -154,6 +154,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.BOX_TOKEN;
     delete process.env.OPENCODE_API_KEY;
     delete process.env.OMB_TTS_KEY;
+    delete process.env.OMB_CLAUDE_SESSION_IDLE_MS;
+    delete process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -248,6 +250,36 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("local-model");
     expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
     expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
+  });
+
+  it("injects a leftover API id when a local host is serving that model", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes(":8888")) {
+        return new Response(JSON.stringify({ data: [{ id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }] }), { status: 200 });
+      }
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
+    try {
+      await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
+      const dump = join(scratch, "dump-leftover.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({
+        threadId: "t-leftover-local",
+        text: "hi",
+        model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+      });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("orcarouter/Qwen3.8-27B-Uncensored-GGUF");
+      expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
+      expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
+      expect(seen.env.ANTHROPIC_API_KEY).toBe("unsloth-secret");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 
   it("mounts the agents comms proxy as an MCP server and pre-allows its tools", async () => {
@@ -426,6 +458,94 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-int");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+  });
+
+  it("a message sent mid-turn is steered into the running turn", async () => {
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "first" });
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    await expect(instance.adapter.steer!("t-steer", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const reply = recorder.events.find(
+      (e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.startsWith("reply to:"),
+    ) as { text: string };
+    expect(reply.text).toContain("steered: and also this");
+    expect(recorder.events.every((e) => e.turnId === turnId)).toBe(true);
+    await expect(instance.adapter.steer!("t-steer", "late")).resolves.toBe(false);
+  });
+
+  it("reuses the live process for the next compatible turn", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-live", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const dumpBefore = readFileSync(dump, "utf8");
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    const second = await instance.adapter.sendTurn({ threadId: "t-live", text: "two", resumeCursor: announced });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(readFileSync(dump, "utf8")).toBe(dumpBefore);
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(2);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(2);
+  });
+
+  it("denies late broker asks between retained turns without opening a zombie card", async () => {
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-retained-late", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const conn = await connectSocket(permissionSocketPath("t-retained-late"));
+    const nextAnswer = answerQueue(conn);
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const answer = nextAnswer();
+    conn.write(JSON.stringify({ t: "ask", id: "ask-between", tool: "Bash", input: { command: "echo late" } }) + "\n");
+
+    await expect(answer).resolves.toMatchObject({
+      id: "ask-between",
+      behavior: "deny",
+      message: "OpenMausBot: the turn ended",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(
+      instance.adapter.respondToRequest("t-retained-late", "ask-between", { behavior: "allow" }),
+    ).resolves.toBe("unavailable");
+    conn.end();
+  });
+
+  it("replaces and resumes a live process when its spawn contract changes", async () => {
+    await create();
+    const dumpPath = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dumpPath;
+    await instance.adapter.sendTurn({ threadId: "t-switch", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+    rmSync(dumpPath);
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-switch",
+      text: "two",
+      model: "claude-other",
+      resumeCursor: announced,
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const dump = JSON.parse(readFileSync(dumpPath, "utf8"));
+    expect(dump.argv).toContain("--resume");
+    expect(dump.argv).toContain("claude-other");
+  });
+
+  it("closes an idle session after the configured window", async () => {
+    process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS = "10";
+    process.env.OMB_CLAUDE_SESSION_IDLE_MS = "50";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-idle", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+    process.env.FAKE_CLAUDE_DUMP = join(scratch, "idle-dump.json");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    const second = await instance.adapter.sendTurn({ threadId: "t-idle", text: "two", resumeCursor: announced });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(JSON.parse(readFileSync(join(scratch, "idle-dump.json"), "utf8")).argv).toContain("--resume");
   });
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
@@ -673,6 +793,89 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     conn.end();
     await instance.adapter.interruptTurn("t-perm-dup-4");
     await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("drops a late ask on an already-closed broker instead of a dead card (#211)", async () => {
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId: "t-perm-late", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+
+    // Same connection stays open across the turn ending — the exact
+    // condition that let a still-alive child raise an unanswerable card.
+    const conn = connect(permissionSocketPath("t-perm-late"));
+    await new Promise<void>((resolve, reject) => {
+      conn.on("connect", resolve);
+      conn.on("error", reject);
+    });
+
+    await instance.adapter.interruptTurn("t-perm-late");
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
+      let buf = "";
+      conn.on("data", (c) => {
+        buf += c;
+        const nl = buf.indexOf("\n");
+        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
+      });
+    });
+    conn.write(JSON.stringify({ t: "ask", id: "ask-late", tool: "Bash", input: { command: "rm -rf /" } }) + "\n");
+
+    // A dead card is a request.opened with no way to ever answer it — assert
+    // the late ask never becomes one, and the connection still gets a
+    // definite reply rather than hanging forever.
+    expect(await reply).toMatchObject({
+      id: "ask-late",
+      behavior: "deny",
+      message: "OpenMausBot: the turn ended",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(instance.adapter.respondToRequest("t-perm-late", "ask-late", { behavior: "allow" })).resolves.toBe(
+      "unavailable",
+    );
+
+    conn.end();
+  });
+
+  it("drops a late question on an already-closed broker with an answer, not a deny (#211)", async () => {
+    // systemEndedReply(kind) branches on "question" vs "permission" — cover
+    // the question arm too, since the deny arm above doesn't exercise it.
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId: "t-question-late", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+
+    const conn = connect(permissionSocketPath("t-question-late"));
+    await new Promise<void>((resolve, reject) => {
+      conn.on("connect", resolve);
+      conn.on("error", reject);
+    });
+
+    await instance.adapter.interruptTurn("t-question-late");
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
+      let buf = "";
+      conn.on("data", (c) => {
+        buf += c;
+        const nl = buf.indexOf("\n");
+        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
+      });
+    });
+    conn.write(JSON.stringify({ t: "ask", kind: "question", id: "q-late", tool: "ask_user", input: { question: "still there?" } }) + "\n");
+
+    expect(await reply).toMatchObject({
+      id: "q-late",
+      behavior: "answer",
+      message: "OpenMausBot: the turn is ending — wrap up.",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(
+      instance.adapter.respondToRequest("t-question-late", "q-late", { behavior: "answer", message: "yes" }),
+    ).resolves.toBe("unavailable");
+
+    conn.end();
   });
 
   it("passes effort to the CLI, and omits the flag when unset", async () => {

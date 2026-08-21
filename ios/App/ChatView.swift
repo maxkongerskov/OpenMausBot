@@ -24,6 +24,7 @@ struct ChatView: View {
     @State private var showingTasks = false
     @State private var showingComputer = false
     @State private var showingPlus = false
+    @State private var showingProfile = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
     /// The opening beat: the island grows with the bot's face in it, then
@@ -37,10 +38,6 @@ struct ChatView: View {
     /// one per chat and it has no message id to borrow.
     static let liveBubbleId = "companion.live"
 
-    private var messages: [Message] {
-        session.state.visibleTranscript(forThread: chat.threadId)
-    }
-
     /// The live chat record, so busy/unread stay current as frames land.
     private var current: Chat {
         switch chat {
@@ -48,6 +45,15 @@ struct ChatView: View {
         case let .room(room):
             return session.state.rooms.first { $0.id == room.id }.map(Chat.room) ?? chat
         }
+    }
+
+    /// A bot receives a new thread when its task changes. Navigation keeps
+    /// the original Chat value, so every transcript lookup must follow the
+    /// live record instead of the snapshot that opened this screen.
+    private var threadId: String { current.threadId }
+
+    private var messages: [Message] {
+        session.state.visibleTranscript(forThread: threadId)
     }
 
     /// Unread elsewhere — what the back pill's badge counts, like Messages.
@@ -81,14 +87,14 @@ struct ChatView: View {
                         // room for the floating face when scrolled to the top
                         Color.clear.frame(height: 72)
 
-                        if session.state.hasMore[chat.threadId] == true {
+                        if session.state.hasMore[threadId] == true {
                             Button("Load earlier messages") {
                                 // keep the reader where they were: after older
                                 // messages are prepended, sit back on the one
                                 // that used to be at the top
                                 let anchor = transcript.first?.id
                                 Task {
-                                    await session.loadOlder(threadId: chat.threadId)
+                                    await session.loadOlder(threadId: threadId)
                                     if let anchor { proxy.scrollTo(anchor, anchor: .top) }
                                 }
                             }
@@ -123,10 +129,10 @@ struct ChatView: View {
                         // one arrives — the store clears it on the same frame
                         // that appends the message, so there is never a beat
                         // where both are on screen.
-                        if let live = session.state.streaming[chat.threadId], !live.isEmpty {
+                        if let live = session.state.streaming[threadId], !live.isEmpty {
                             StreamingBubble(text: live, reasoning: nil, color: current.color)
                                 .id(Self.liveBubbleId)
-                        } else if let thinking = session.state.reasoning[chat.threadId], !thinking.isEmpty {
+                        } else if let thinking = session.state.reasoning[threadId], !thinking.isEmpty {
                             // Only while there is no answer yet. Once tokens
                             // of the reply exist, the reasoning is behind us
                             // and showing both is just noise.
@@ -166,7 +172,7 @@ struct ChatView: View {
                                 Color.clear
                             }
                         }
-                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
+                        ChatAvatarView(chat: current, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
                             .offset(y: faceCentre - faceSize / 2)
                             .allowsHitTesting(false)
                     }
@@ -196,7 +202,7 @@ struct ChatView: View {
                 // the string so this fires once per delta batch, and without
                 // animation — animating every token turns a smooth stream
                 // into a stutter, because each scroll interrupts the last.
-                .onChange(of: session.state.streaming[chat.threadId]?.count ?? 0) { _, length in
+                .onChange(of: session.state.streaming[threadId]?.count ?? 0) { _, length in
                     guard length > 0 else { return }
                     proxy.scrollTo(Self.liveBubbleId, anchor: .bottom)
                 }
@@ -215,6 +221,7 @@ struct ChatView: View {
                     session.consumeFocus(messageId)
                 }
             }
+            .id(threadId)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             composer
@@ -226,12 +233,15 @@ struct ChatView: View {
         .navigationDestination(isPresented: $showingComputer) {
             if case let .bot(bot) = current { ComputerView(bot: bot) }
         }
-        .task {
+        .task(id: threadId) {
             // opening a chat is what marks it read, exactly as on the desktop
             if current.unread { await session.markRead(current) }
 #if DEBUG
             // `-open-plus`: the + sheet up, for the screenshot harness
             if ProcessInfo.processInfo.arguments.contains("-open-plus") { showingPlus = true }
+            // Profile parity screenshots without automating a tap through the
+            // animated island/header transition.
+            if ProcessInfo.processInfo.arguments.contains("-open-profile") { showingProfile = true }
 #endif
         }
         .onChange(of: current.unread) { _, unread in
@@ -242,6 +252,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showingTasks) {
             if case let .bot(bot) = current { TaskManagerView(bot: bot) }
+        }
+        .sheet(isPresented: $showingProfile) {
+            if case let .bot(bot) = current { AgentProfileView(bot: bot) }
         }
         .sheet(item: $shareFile) { file in
             ActivityShareSheet(items: [file.url])
@@ -312,11 +325,27 @@ struct ChatView: View {
         VStack(spacing: 6) {
             // Always here, following the island's face while that one is
             // the source: when the island lets go, this one flies home.
-            // the face itself is drawn by the island layer above, so it can
-            // travel; this is its seat
-            Color.clear.frame(width: 60, height: 60)
-            Menu {
-                chatActions
+            // The face itself is drawn by the island layer above so there is
+            // still only one animated avatar. This transparent seat becomes
+            // its independent profile button once the opening transition has
+            // settled.
+            if case .bot = current {
+                Button { showingProfile = true } label: {
+                    Color.clear
+                        .frame(width: 60, height: 60)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .allowsHitTesting(!islandVisible)
+                .accessibilityHidden(islandVisible)
+                .accessibilityLabel("Open \(current.name) profile")
+                .accessibilityHint("Edits this agent's identity, avatar, notifications, and voice")
+            } else {
+                Color.clear.frame(width: 60, height: 60)
+            }
+            Button {
+                if case .bot = current { showingProfile = true }
+                else { showingPlus = true }
             } label: {
                 HStack(spacing: 6) {
                     Text(current.name)
@@ -329,7 +358,7 @@ struct ChatView: View {
                             .foregroundStyle(Color.secondary)
                             .lineLimit(1)
                     }
-                    Image(systemName: "chevron.right")
+                    Image(systemName: current.isBot ? "person.crop.circle" : "ellipsis")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.secondary)
                 }
@@ -340,42 +369,9 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .glassCapsule()
+            .accessibilityLabel(current.isBot ? "Open \(current.name) profile" : "Open \(current.name) chat options")
         }
         .padding(.top, -4)
-    }
-
-    /// Everything the name pill and the composer's + can do. One list, two
-    /// doors — the pill for "about this chat", the + for "do something".
-    @ViewBuilder
-    private var chatActions: some View {
-        if case let .bot(bot) = current {
-            Button("New task", systemImage: "plus.square.on.square") {
-                Task { await session.createTask(for: bot, title: nil) }
-            }
-            .disabled(bot.busy == true)
-            Button("Tasks", systemImage: "square.stack") { showingTasks = true }
-            Button("Watch computer", systemImage: "display") { showingComputer = true }
-        }
-        Button("Share as Markdown", systemImage: "doc.plaintext") {
-            Task {
-                if let url = await session.export(threadId: current.threadId, format: "markdown") {
-                    shareFile = ShareFile(url: url)
-                }
-            }
-        }
-        Button("Share as JSON", systemImage: "curlybraces") {
-            Task {
-                if let url = await session.export(threadId: current.threadId, format: "json") {
-                    shareFile = ShareFile(url: url)
-                }
-            }
-        }
-        if current.busy, case let .bot(bot) = current {
-            Divider()
-            Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
-                Task { await session.interrupt(bot: bot) }
-            }
-        }
     }
 
     // MARK: - The + sheet
@@ -466,6 +462,16 @@ struct ChatView: View {
         ) {
             Task {
                 if let url = await session.export(threadId: current.threadId, format: "markdown") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        })
+        out.append(PlusAction(
+            id: "share-json", systemImage: "curlybraces", title: "Share as JSON",
+            subtitle: "Structured transcript data"
+        ) {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "json") {
                     shareFile = ShareFile(url: url)
                 }
             }
@@ -804,9 +810,7 @@ struct CardView: View {
 
     /// One definition of "the refusal", shared by the button tint and the
     /// choice above so the two cannot drift apart.
-    private static func isRefusal(_ option: String) -> Bool {
-        option.caseInsensitiveCompare("Deny") == .orderedSame
-    }
+    private static func isRefusal(_ option: String) -> Bool { OptionCard.isRefusal(option) }
 
     private var tint: Color { MausPalette.color(chat.color) }
 
@@ -842,7 +846,7 @@ struct CardView: View {
                             Button {
                                 answering = true
                                 Task {
-                                    await session.answer(threadId: chat.threadId, card: card, choice: option)
+                                    await session.answer(chat: chat, card: card, choice: option)
                                     answering = false
                                 }
                             } label: {
@@ -871,7 +875,12 @@ struct CardView: View {
                             answering = true
                             Task {
                                 await session.alwaysAllow(bot: bot, card: card)
-                                await session.answer(threadId: chat.threadId, card: card, choice: allow)
+                                await session.answer(
+                                    chat: chat,
+                                    card: card,
+                                    choice: allow,
+                                    rememberingPermission: false
+                                )
                                 answering = false
                             }
                         }

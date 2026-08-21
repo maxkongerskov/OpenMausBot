@@ -41,6 +41,10 @@ final class Session: ObservableObject {
     /// A short-lived desktop handoff waiting for PairingView to present it.
     @Published private(set) var pairingInvite: PairingInvite?
 
+    /// A notification response that should be pushed by the roster's
+    /// NavigationStack after the exact detached task has been activated.
+    @Published private(set) var notificationChat: Chat?
+
     private var client: CompanionClient?
     /// The device token, kept in memory so the client can be rebuilt when the
     /// dial moves to another stored host. The keychain remains the only place
@@ -60,9 +64,27 @@ final class Session: ObservableObject {
     /// panel can be pushed twice in a navigation stack, and the last one to
     /// close is the one that should turn screens back off.
     private var screenWatchers = 0
+    /// Authenticated avatar bytes shared by roster, header, group and task
+    /// surfaces. Both entry count and byte cost are bounded because one valid
+    /// uploaded image may be 10 MB.
+    private let avatarCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 32 * 1_024 * 1_024
+        return cache
+    }()
+    /// Concurrent first renders share one download. The id prevents an old
+    /// request finishing after sign-out from removing a newer pairing's task
+    /// for the same attachment path.
+    private var avatarFetches: [String: (id: UUID, task: Task<Data?, Never>)] = [:]
+    private var avatarCacheGeneration = 0
     /// A saved connection exists, but its token could not be read yet. Keeps
     /// "the keychain is locked" from being mistaken for "not paired".
     private var restorePending = false
+    /// A notification can cold-launch the app before protected Keychain data
+    /// is available. Retain the last explicitly tapped destination until the
+    /// paired client can be rebuilt after unlock.
+    private var pendingNotification: NotificationTarget?
 
     private static let connectionKey = "companion.connection"
 
@@ -70,6 +92,9 @@ final class Session: ObservableObject {
 
     init() {
         _ = NotificationCoordinator.shared
+        NotificationCoordinator.shared.responseHandler = { [weak self] target in
+            Task { @MainActor in await self?.openNotification(target) }
+        }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-store-preview"),
            let url = Bundle.main.url(forResource: "StorePreview", withExtension: "json"),
@@ -180,6 +205,7 @@ final class Session: ObservableObject {
         streamTask?.cancel()
         streamTask = nil
         restorePending = false
+        pendingNotification = nil
         if let id = connection?.id { Keychain.remove(id) }
         UserDefaults.standard.removeObject(forKey: Self.connectionKey)
         connection = nil
@@ -187,6 +213,7 @@ final class Session: ObservableObject {
         token = nil
         rotation = CandidateRotation(hosts: [])
         state = CompanionState()
+        resetAvatarCache()
         NotificationCoordinator.shared.setBadge(0)
         status = .unpaired
     }
@@ -199,6 +226,10 @@ final class Session: ObservableObject {
         // purpose. Coming to the front is the moment worth retrying on: the
         // app is on screen, so the phone is in someone's hand and unlocked.
         if client == nil, restorePending { restore() }
+        if client != nil, let pendingNotification {
+            self.pendingNotification = nil
+            Task { [weak self] in await self?.openNotification(pendingNotification) }
+        }
         // back before the grace period ran out: keep the stream, drop the task
         endLinger()
         guard client != nil, streamTask == nil else { return }
@@ -439,9 +470,17 @@ final class Session: ObservableObject {
         }
     }
 
-    func answer(threadId: String, card: OptionCard, choice: String) async {
+    func answer(chat: Chat, card: OptionCard, choice: String, rememberingPermission: Bool = true) async {
         guard let requestId = card.requestId else { return }
-        await answer(threadId: threadId, requestId: requestId, choice: choice, isPermission: card.isPermission)
+        if rememberingPermission, card.shouldRememberPermission(for: choice), case let .bot(bot) = chat {
+            await alwaysAllow(bot: bot, card: card)
+        }
+        await answer(
+            threadId: chat.threadId,
+            requestId: requestId,
+            choice: choice,
+            isPermission: card.isPermission
+        )
     }
 
     /// The same answer, from something that only has the ids — the Live
@@ -450,11 +489,12 @@ final class Session: ObservableObject {
         await perform {
             // Permission cards answer allow/deny; a question answers with
             // the chosen text. The harness tells them apart by `behavior`.
-            if isPermission {
+            let behavior = OptionCard.responseBehavior(for: choice, isPermission: isPermission)
+            if behavior != "answer" {
                 try await $0.respond(
                     threadId: threadId,
                     requestId: requestId,
-                    behavior: choice.lowercased() == "allow" ? "allow" : "deny"
+                    behavior: behavior
                 )
             } else {
                 try await $0.respond(threadId: threadId, requestId: requestId, behavior: "answer", message: choice)
@@ -614,6 +654,190 @@ final class Session: ObservableObject {
         catch { actionError = error.localizedDescription }
     }
 
+    // MARK: - Agent profile
+
+    func updateProfile(_ patch: BotProfilePatch, for bot: Bot) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let updated = try await client.updateProfile(botId: bot.id, patch: patch)
+            guard !Task.isCancelled else { return nil }
+            state.apply(.bot(updated))
+            return updated
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func uploadAvatar(_ data: Data, mime: String, for bot: Bot, crop: AvatarCrop) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let avatarUrl = try await client.uploadAvatar(data: data, mime: mime)
+            guard !Task.isCancelled else { return nil }
+            let current = state.bot(bot.id) ?? bot
+            return await updateProfile(
+                BotProfilePatch(avatarUrl: .set(avatarUrl), avatarCrop: crop),
+                for: current
+            )
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func generateAvatar(prompt: String, for bot: Bot) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let updated = try await client.generateAvatar(botId: bot.id, prompt: prompt)
+            guard !Task.isCancelled else { return nil }
+            state.apply(.bot(updated))
+            return updated
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func avatarData(for bot: Bot) async -> Data? {
+        guard let path = bot.avatarUrl, let client else { return nil }
+        let key = path as NSString
+        if let cached = avatarCache.object(forKey: key) { return cached as Data }
+        let generation = avatarCacheGeneration
+        let fetch: (id: UUID, task: Task<Data?, Never>)
+        if let pending = avatarFetches[path] {
+            fetch = pending
+        } else {
+            let pending = (
+                id: UUID(),
+                task: Task<Data?, Never> { try? await client.avatar(path: path) }
+            )
+            avatarFetches[path] = pending
+            fetch = pending
+        }
+        let data = await fetch.task.value
+        if avatarFetches[path]?.id == fetch.id { avatarFetches.removeValue(forKey: path) }
+        guard !Task.isCancelled, generation == avatarCacheGeneration, let data else { return nil }
+        avatarCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
+    }
+
+    private func resetAvatarCache() {
+        avatarCacheGeneration += 1
+        for fetch in avatarFetches.values { fetch.task.cancel() }
+        avatarFetches.removeAll()
+        avatarCache.removeAllObjects()
+    }
+
+    func voiceOptions() async -> [Voice] {
+        guard let client else { return [] }
+        do { return try await client.voices() }
+        catch { actionError = error.localizedDescription; return [] }
+    }
+
+    func previewVoice(_ voiceId: String, for bot: Bot) async -> Data? {
+        guard let client else { return nil }
+        do { return try await client.previewVoice(text: "Hello, I'm \(bot.name).", voiceId: voiceId) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func configStatus() async -> ConfigStatus? {
+        guard let client else { return nil }
+        return try? await client.config()
+    }
+
+    // MARK: - Routines
+
+    func loadRoutines() async -> (routines: [Routine], runs: [RoutineRun]) {
+        guard let client else { return ([], []) }
+        do { return try await client.routines() }
+        catch { actionError = error.localizedDescription; return ([], []) }
+    }
+
+    func loadRoutineRunAvailability() async -> RoutineRunAvailability? {
+        guard let client else { return nil }
+        do {
+            async let config = client.config()
+            async let instances = client.instances()
+            return try await RoutineRunAvailability(config: config, instances: instances)
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func saveRoutine(_ input: RoutineInput, id: String?) async -> Routine? {
+        guard let client else { return nil }
+        do {
+            if let id { return try await client.updateRoutine(id: id, input: input) }
+            return try await client.createRoutine(input)
+        } catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func setRoutineEnabled(_ routine: Routine, enabled: Bool) async -> Routine? {
+        guard let client else { return nil }
+        do { return try await client.setRoutineEnabled(id: routine.id, enabled: enabled) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func runRoutine(_ routine: Routine) async -> RoutineRun? {
+        guard let client else { return nil }
+        do { return try await client.runRoutine(id: routine.id) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func deleteRoutine(_ routine: Routine) async -> Bool {
+        guard let client else { return false }
+        do { try await client.deleteRoutine(id: routine.id); return true }
+        catch { actionError = error.localizedDescription; return false }
+    }
+
+    // MARK: - Notification navigation
+
+    func openNotification(_ target: NotificationTarget) async {
+        guard let client else {
+            // Do not carry a stale destination into a future, unrelated
+            // pairing. Only a saved connection waiting for Keychain access is
+            // eligible for replay.
+            if restorePending {
+                pendingNotification = target
+                connect()
+            } else {
+                actionError = "Pair this phone with your computer to open that task."
+            }
+            return
+        }
+        pendingNotification = nil
+        do {
+            var bot = state.bot(target.botId)
+            if bot == nil {
+                let fleet = try await client.fleet(messages: 50)
+                state.hydrate(fleet)
+                bot = state.bot(target.botId)
+            }
+            // A room's approval/question notification carries the asker bot
+            // with the ROOM's thread id — open the room rather than asking
+            // the bot to switch to a thread it does not own (a 404).
+            if let room = state.rooms.first(where: { $0.threadId == target.threadId }) {
+                notificationChat = .room(room)
+                return
+            }
+            guard var selected = bot else { throw APIError.status(code: 404, message: "That agent no longer exists.") }
+            if target.requiresTaskSwitch(activeThreadId: selected.threadId) {
+                do {
+                    selected = try await client.switchTask(botId: selected.id, threadId: target.threadId)
+                    state.apply(.bot(selected))
+                } catch {
+                    // The thread may be gone (task deleted, stale payload).
+                    // Landing in the bot's current chat still beats an error
+                    // banner and no navigation at all.
+                }
+            }
+            notificationChat = .bot(selected)
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func consumeNotificationChat() { notificationChat = nil }
+
     func react(to message: Message, in threadId: String, emoji: String) async {
         guard let client else { return }
         do {
@@ -731,6 +955,11 @@ enum Chat: Identifiable, Hashable {
         case let .bot(bot): return bot.name
         case let .room(room): return room.name
         }
+    }
+
+    var isBot: Bool {
+        if case .bot = self { return true }
+        return false
     }
 
     var subtitle: String {

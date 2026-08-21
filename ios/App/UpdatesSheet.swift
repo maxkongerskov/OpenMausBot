@@ -78,7 +78,7 @@ private struct UpdateRow: View {
     var body: some View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 12) {
-                MausAvatar(color: update.chat.color, size: 40, state: MausState.forChat(update.chat, in: session.state))
+                ChatAvatarView(chat: update.chat, size: 40, state: MausState.forChat(update.chat, in: session.state))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(update.chat.name)
@@ -98,7 +98,7 @@ private struct UpdateRow: View {
                                 Button {
                                     answering = true
                                     Task {
-                                        await session.answer(threadId: update.chat.threadId, card: card, choice: option)
+                                        await session.answer(chat: update.chat, card: card, choice: option)
                                         answering = false
                                     }
                                 } label: {
@@ -152,6 +152,6 @@ private struct UpdateRow: View {
 /// are drawn as buttons, so the tints cannot drift apart.
 enum CardStyle {
     static func isRefusal(_ option: String) -> Bool {
-        option.caseInsensitiveCompare("Deny") == .orderedSame
+        OptionCard.isRefusal(option)
     }
 }

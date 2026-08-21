@@ -36,6 +36,35 @@ public struct OptionCard: Codable, Hashable, Sendable {
 
     /// Permission cards carry a tool; questions do not.
     public var isPermission: Bool { tool != nil }
+
+    /// The wire API accepts an approval behavior rather than the button's
+    /// display text. Treat the one refusal as deny and every other offered
+    /// permission choice as allow: providers may say "Approve", "Yes", or
+    /// "Always allow", and none of those should accidentally become a deny.
+    public func responseBehavior(for choice: String) -> String {
+        Self.responseBehavior(for: choice, isPermission: isPermission)
+    }
+
+    /// The ID-only form is used by Live Activity buttons, which carry the
+    /// card kind but not the full card payload.
+    public static func responseBehavior(for choice: String, isPermission: Bool) -> String {
+        guard isPermission else { return "answer" }
+        return isRefusal(choice) ? "deny" : "allow"
+    }
+
+    /// Shared by all of the app's card surfaces and by Live Activities.
+    public static func isRefusal(_ choice: String) -> Bool {
+        choice.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("Deny") == .orderedSame
+    }
+
+    /// A provider may include the standing grant as an option of its own.
+    /// Only remember it when the server supplied the narrow grant key.
+    public func shouldRememberPermission(for choice: String) -> Bool {
+        guard isPermission, allowKey != nil else { return false }
+        let normalized = choice.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.caseInsensitiveCompare("Always allow") == .orderedSame
+    }
 }
 
 public struct ToolActivity: Codable, Hashable, Sendable {
@@ -143,6 +172,11 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var description: String
     public var notifications: Bool
     public var color: String
+    /// An app-owned `/api/attachments/:name` URL. The URL is intentionally
+    /// relative so every paired device fetches it from its own computer.
+    public var avatarUrl: String?
+    /// `mascot` ignores `avatarUrl`; the other values describe the image mask.
+    public var avatarCrop: AvatarCrop?
     public var unread: Bool
     public var modelSelection: ModelSelection
     public var createdAt: Double
@@ -165,6 +199,23 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var activeLeafId: String?
     /// Paged responses only: there is more transcript above what you got.
     public var hasMore: Bool?
+}
+
+public enum AvatarCrop: String, Codable, CaseIterable, Hashable, Sendable {
+    case mascot, circle, rounded, square
+
+    /// The desktop may gain crop modes before this app updates. Falling back
+    /// keeps the complete bot/fleet payload decodable and guarantees a safe,
+    /// deterministic identity image instead of dropping the agent.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? .mascot
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct GroupResponder: Codable, Hashable, Sendable {
@@ -343,7 +394,253 @@ public struct ConfigStatus: Codable, Sendable {
     public var composio: ConfigFlag?
     public var box: ConfigFlag?
     public var tts: ConfigFlag?
+    public var imageGen: ConfigFlag?
     public var profile: Profile?
+
+    /// Whether the shared synthesis credential exists on the paired
+    /// computer. The credential itself never appears in this response.
+    public var isTTSConfigured: Bool {
+        tts?.configured == true || tts?.apiKeyConfigured == true
+    }
+
+    /// An empty voice means there is no workspace fallback. Clients must not
+    /// present that state as a usable "Workspace default" choice.
+    public var hasWorkspaceDefaultVoice: Bool {
+        !(tts?.voice?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    public func canSpeak(agentVoice: String?) -> Bool {
+        let hasAgentVoice = !(agentVoice?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        return isTTSConfigured && (hasAgentVoice || hasWorkspaceDefaultVoice)
+    }
+}
+
+// MARK: - Agent profiles, voices, routines, and notifications
+
+public struct BotProfilePatch: Encodable, Sendable {
+    /// `nil` means "leave the field alone". Profile actions deliberately send
+    /// only the fields they own so an avatar upload cannot overwrite identity
+    /// or voice values that changed on another client while the sheet was open.
+    public var name: String?
+    public var title: String?
+    public var description: String?
+    public var notifications: Bool?
+    public var avatarUrl: AvatarURL?
+    public var avatarCrop: AvatarCrop?
+    public var voice: String?
+    public var speakReplies: Bool?
+
+    /// `avatarUrl` needs three wire states: omitted, a stored path, or JSON
+    /// null to clear. A nested optional would technically represent that, but
+    /// makes call sites easy to get wrong (`nil` is ambiguous at a glance).
+    public enum AvatarURL: Equatable, Sendable {
+        case set(String)
+        case clear
+    }
+
+    public init(
+        name: String? = nil,
+        title: String? = nil,
+        description: String? = nil,
+        notifications: Bool? = nil,
+        avatarUrl: AvatarURL? = nil,
+        avatarCrop: AvatarCrop? = nil,
+        voice: String? = nil,
+        speakReplies: Bool? = nil
+    ) {
+        self.name = name
+        self.title = title
+        self.description = description
+        self.notifications = notifications
+        self.avatarUrl = avatarUrl
+        self.avatarCrop = avatarCrop
+        self.voice = voice
+        self.speakReplies = speakReplies
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, title, description, notifications, avatarUrl, avatarCrop, voice, speakReplies
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encodeIfPresent(name, forKey: .name)
+        try values.encodeIfPresent(title, forKey: .title)
+        try values.encodeIfPresent(description, forKey: .description)
+        try values.encodeIfPresent(notifications, forKey: .notifications)
+        if let avatarUrl {
+            switch avatarUrl {
+            case let .set(path): try values.encode(path, forKey: .avatarUrl)
+            case .clear: try values.encodeNil(forKey: .avatarUrl)
+            }
+        }
+        try values.encodeIfPresent(avatarCrop, forKey: .avatarCrop)
+        try values.encodeIfPresent(voice, forKey: .voice)
+        try values.encodeIfPresent(speakReplies, forKey: .speakReplies)
+    }
+}
+
+public struct Voice: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var label: String
+    public var description: String?
+}
+
+public struct RoutineSchedule: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case once, daily
+        /// A schedule introduced by a newer desktop. It remains visible but
+        /// cannot be toggled or saved until the user chooses a supported kind.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Self(rawValue: raw) ?? .unknown
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+    public var type: Kind
+    public var at: Double?
+    public var time: String?
+    public var weekdays: [Int]?
+
+    public static func once(at: Date) -> Self {
+        .init(type: .once, at: at.timeIntervalSince1970 * 1_000, time: nil, weekdays: nil)
+    }
+
+    public static func daily(time: String, weekdays: [Int]) -> Self {
+        .init(type: .daily, at: nil, time: time, weekdays: weekdays)
+    }
+}
+
+public struct Routine: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var prompt: String
+    public var botId: String
+    public var runOn: String
+    public var enabled: Bool
+    public var schedule: RoutineSchedule
+    public var durationMinutes: Int
+    public var nextRunAt: Double?
+    public var createdAt: Double
+    public var updatedAt: Double
+}
+
+public struct RoutineRun: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var routineId: String
+    public var routineName: String
+    public var prompt: String?
+    public var durationMinutes: Int?
+    public var botId: String
+    public var runOn: String
+    public var scheduledFor: Double
+    public var status: String
+    public var manual: Bool
+    public var triggerSource: String?
+    public var threadId: String?
+    public var startedAt: Double?
+    public var finishedAt: Double?
+    public var output: String?
+    public var error: String?
+    public var createdAt: Double
+    public var seenAt: Double?
+}
+
+public struct RoutineInput: Encodable, Sendable {
+    public var name: String
+    public var prompt: String
+    public var botId: String
+    public var runOn: String
+    public var enabled: Bool?
+    public var schedule: RoutineSchedule
+    public var durationMinutes: Int
+
+    public init(
+        name: String, prompt: String, botId: String, runOn: String = "maus",
+        enabled: Bool? = nil, schedule: RoutineSchedule, durationMinutes: Int = 30
+    ) {
+        self.name = name
+        self.prompt = prompt
+        self.botId = botId
+        self.runOn = runOn
+        self.enabled = enabled
+        self.schedule = schedule
+        self.durationMinutes = durationMinutes
+    }
+}
+
+public enum RoutineRunLocation: String, CaseIterable, Codable, Hashable, Sendable {
+    case maus
+    case cloud
+}
+
+/// Desktop-equivalent run-location availability, derived only from paired-safe
+/// status endpoints. Selecting Cloud VM requires both the host credential and
+/// an available Box agent. An existing cloud routine remains editable without
+/// silently changing where it runs if that VM is temporarily unavailable.
+public struct RoutineRunAvailability: Equatable, Sendable {
+    public var cloudConfigured: Bool
+    public var cloudInstanceAvailable: Bool
+
+    public init(config: ConfigStatus?, instances: [Instance]) {
+        cloudConfigured = config?.box?.configured == true
+        cloudInstanceAvailable = instances.contains {
+            $0.driverKind == "boxAgent" && $0.snapshot.isAvailable
+        }
+    }
+
+    public var cloudReady: Bool { cloudConfigured && cloudInstanceAvailable }
+
+    public func canSelect(_ location: RoutineRunLocation, preserving current: RoutineRunLocation) -> Bool {
+        location == .maus || cloudReady || current == .cloud
+    }
+}
+
+public extension Routine {
+    var runLocation: RoutineRunLocation {
+        RoutineRunLocation(rawValue: runOn) ?? .maus
+    }
+
+    /// Mirrors the desktop `canToggleRoutine` policy. A one-time routine has
+    /// no meaningful Resume action once its scheduled instant has passed.
+    func canToggle(at date: Date = Date()) -> Bool {
+        switch schedule.type {
+        case .daily:
+            true
+        case .once:
+            (schedule.at ?? -.infinity) > date.timeIntervalSince1970 * 1_000
+        case .unknown:
+            false
+        }
+    }
+}
+
+public struct NotificationTarget: Equatable, Sendable {
+    public let botId: String
+    public let threadId: String
+
+    public init?(botId: String?, threadId: String?) {
+        guard let botId, let threadId,
+              !botId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !threadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        self.botId = botId
+        self.threadId = threadId
+    }
+
+    public init?(payload: [String: String]) {
+        self.init(botId: payload["botId"], threadId: payload["threadId"])
+    }
+
+    public func requiresTaskSwitch(activeThreadId: String) -> Bool {
+        threadId != activeThreadId
+    }
 }
 
 /// The harness's error body. Every non-2xx response carries one.
@@ -391,3 +688,27 @@ struct ActiveBranchResponse: Codable, Sendable {
 struct BotResponse: Codable, Sendable {
     var bot: Bot
 }
+
+struct VoiceListResponse: Codable, Sendable {
+    var voices: [Voice]
+    var error: String?
+}
+
+struct AttachmentResponse: Codable, Sendable {
+    var path: String
+    var mime: String
+    var bytes: Int
+}
+
+struct GeneratedAvatarResponse: Codable, Sendable {
+    var avatarUrl: String
+    var bot: Bot
+}
+
+struct RoutinesResponse: Codable, Sendable {
+    var routines: [Routine]
+    var runs: [RoutineRun]
+}
+
+struct RoutineResponse: Codable, Sendable { var routine: Routine }
+struct RoutineRunResponse: Codable, Sendable { var run: RoutineRun }
