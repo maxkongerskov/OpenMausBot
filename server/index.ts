@@ -252,7 +252,11 @@ const wireTask = ({ resumeCursors, lastInstanceId, ...task }: TaskRecord) => tas
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors, tasks, ...rest } = bot;
-  return { ...rest, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+  return {
+    ...rest,
+    teamId: rest.teamId ?? null,
+    ...(tasks ? { tasks: tasks.map(wireTask) } : {}),
+  };
 };
 
 const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
@@ -289,11 +293,14 @@ store.onChange((change) => {
       break;
     case "group": {
       const group = store.group(change.groupId);
-      if (group) broadcast({ kind: "group", group });
+      if (group) broadcast({ kind: "group", group: { ...group, teamId: group.teamId ?? null } });
       break;
     }
     case "group.deleted":
       broadcast({ kind: "group.deleted", groupId: change.groupId });
+      break;
+    case "teams":
+      broadcast({ kind: "teams", teams: change.teams, activeTeamId: change.activeTeamId });
       break;
   }
 });
@@ -2639,7 +2646,9 @@ const server = createServer(async (req, res) => {
       if (limit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       return json(res, 200, {
         bots: store.bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
-        groups: store.groups.map((g) => ({ ...g, ...messagePage(g.threadId, limit) })),
+        groups: store.groups.map((g) => ({ ...g, teamId: g.teamId ?? null, ...messagePage(g.threadId, limit) })),
+        teams: store.teams,
+        activeTeamId: store.activeTeamId,
         computerControl: Object.fromEntries(
           store.bots.map((bot) => {
             const snapshot = computerControl.snapshot(bot.id);
@@ -2839,19 +2848,66 @@ const server = createServer(async (req, res) => {
         typeof body.name === "string" && body.name.trim()
           ? body.name.trim()
           : `${store.bot(memberIds[0])!.name} & co.`;
+      const teamId = typeof body.teamId === "string" ? body.teamId : undefined;
+      if (teamId && !store.team(teamId)) return json(res, 400, { error: "no such team" });
       const group = store.createGroup(name, memberIds);
-      return json(res, 201, { group: { ...group, messages: [] } });
+      if (teamId) store.patchGroup(group.id, { teamId });
+      const saved = store.group(group.id) ?? group;
+      return json(res, 201, { group: { ...saved, messages: [] } });
+    }
+    if (method === "GET" && path === "/api/teams") {
+      return json(res, 200, { teams: store.teams, activeTeamId: store.activeTeamId });
+    }
+    if (method === "POST" && path === "/api/teams") {
+      const body = await readBody(req);
+      if (typeof body.name !== "string") return json(res, 400, { error: "name must be a string" });
+      const name = body.name.trim();
+      if (!name) return json(res, 400, { error: "A team needs a name" });
+      if (name.length > 60) return json(res, 400, { error: "name must be at most 60 characters" });
+      const team = store.createTeam(name);
+      if (!team) return json(res, 409, { error: "A team with that name already exists" });
+      if (body.activate !== false) store.setActiveTeam(team.id);
+      return json(res, 201, { team, teams: store.teams, activeTeamId: store.activeTeamId });
+    }
+    if (method === "POST" && path === "/api/teams/active") {
+      const body = await readBody(req);
+      const id = body.id === null || body.id === "" ? null : body.id;
+      if (id !== null && typeof id !== "string") return json(res, 400, { error: "id must be a team id or null" });
+      if (!store.setActiveTeam(id)) return json(res, 404, { error: "no such team" });
+      return json(res, 200, { teams: store.teams, activeTeamId: store.activeTeamId });
+    }
+    m = path.match(/^\/api\/teams\/([\w-]+)$/);
+    if (m && method === "PATCH") {
+      const body = await readBody(req);
+      if (!store.team(m[1])) return json(res, 404, { error: "no such team" });
+      if (typeof body.name !== "string") return json(res, 400, { error: "name must be a string" });
+      const name = body.name.trim();
+      if (!name) return json(res, 400, { error: "A team needs a name" });
+      if (name.length > 60) return json(res, 400, { error: "name must be at most 60 characters" });
+      const team = store.renameTeam(m[1], name);
+      if (!team) return json(res, 409, { error: "A team with that name already exists" });
+      return json(res, 200, { team, teams: store.teams, activeTeamId: store.activeTeamId });
+    }
+    if (m && method === "DELETE") {
+      if (!store.deleteTeam(m[1])) return json(res, 404, { error: "no such team" });
+      return json(res, 200, { ok: true, teams: store.teams, activeTeamId: store.activeTeamId });
     }
     if (method === "POST" && path === "/api/teams/export") {
       const body = await readBody(req);
       const profileName = cfg.profile?.name?.trim();
-      const name =
+      let memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
+      let name =
         typeof body.name === "string" && body.name.trim()
           ? body.name.trim()
           : profileName
             ? `${profileName}'s Team`
             : "My OpenMaus Team";
-      const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
+      if (typeof body.teamId === "string") {
+        const team = store.team(body.teamId);
+        if (!team) return json(res, 404, { error: "no such team" });
+        memberIds = store.bots.filter((bot) => !bot.hidden && bot.teamId === team.id).map((bot) => bot.id);
+        if (typeof body.name !== "string" || !body.name.trim()) name = team.name;
+      }
       if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         return json(
@@ -2957,10 +3013,27 @@ const server = createServer(async (req, res) => {
           const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false });
           return bot ? [publicBot(bot)] : [];
         });
-        const publicBots = importedBots.map(publicBot);
+        // Add into the team you're looking at; replace (or All bots) stands
+        // up a team named after the file and switches to it.
+        const hostTeam =
+          importMode === "add" && store.activeTeamId && store.team(store.activeTeamId)
+            ? store.team(store.activeTeamId)!
+            : store.createTeamNamed(manifest.team.name);
+        if (hostTeam.id !== store.activeTeamId) store.setActiveTeam(hostTeam.id);
+        for (const created of importedBots) {
+          store.patchBot(created.id, { teamId: hostTeam.id, section: hostTeam.name });
+        }
+        const publicBots = importedBots.map((bot) => publicBot(store.bot(bot.id) ?? bot));
         for (const bot of archivedBots) broadcast({ kind: "bot", bot });
         for (const bot of publicBots) broadcast({ kind: "bot", bot });
-        return json(res, 201, { bots: publicBots, archivedBots, archived });
+        return json(res, 201, {
+          bots: publicBots,
+          archivedBots,
+          archived,
+          team: hostTeam,
+          teams: store.teams,
+          activeTeamId: store.activeTeamId,
+        });
       } catch (error) {
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
@@ -3008,6 +3081,12 @@ const server = createServer(async (req, res) => {
         else if (typeof body.pinnedMessageId === "string" && /^[\w-]+$/.test(body.pinnedMessageId)) {
           patch.pinnedMessageId = body.pinnedMessageId;
         } else return json(res, 400, { error: "pinnedMessageId must be a message id" });
+      }
+      if (body.teamId !== undefined) {
+        if (body.teamId === null || body.teamId === "") patch.teamId = undefined;
+        else if (typeof body.teamId !== "string") return json(res, 400, { error: "teamId must be a string" });
+        else if (!store.team(body.teamId)) return json(res, 400, { error: "no such team" });
+        else patch.teamId = body.teamId;
       }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });
@@ -3063,7 +3142,10 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { message: patched });
     }
     if (method === "POST" && path === "/api/bots") {
-      const bot = store.createBot();
+      const body = await readBody(req);
+      const teamId = typeof body.teamId === "string" ? body.teamId : undefined;
+      if (teamId && !store.team(teamId)) return json(res, 400, { error: "no such team" });
+      const bot = store.createBot(teamId ? { teamId } : {});
       store.patchBot(bot.id, { modelSelection: await defaultSelection() });
       return json(res, 201, {
         bot: {
@@ -3172,6 +3254,26 @@ const server = createServer(async (req, res) => {
         } else return json(res, 400, { error: "pinnedMessageId must be a message id" });
       }
       if (section !== undefined) patch.section = section ?? undefined;
+      if (body.teamId !== undefined) {
+        if (body.teamId === null || body.teamId === "") {
+          patch.teamId = undefined;
+          if (section === undefined) patch.section = undefined;
+        } else if (typeof body.teamId !== "string") {
+          return json(res, 400, { error: "teamId must be a string" });
+        } else {
+          const team = store.team(body.teamId);
+          if (!team) return json(res, 400, { error: "no such team" });
+          patch.teamId = team.id;
+          if (section === undefined) patch.section = team.name;
+        }
+      } else if (section !== undefined) {
+        if (section === null) patch.teamId = undefined;
+        else {
+          const team = store.findOrCreateTeam(section);
+          if (!team) return json(res, 400, { error: "section must be at most 60 characters" });
+          patch.teamId = team.id;
+        }
+      }
       // per-bot gate on the workspace's connected apps (Composio)
       if (body.composio !== undefined) {
         if (typeof body.composio !== "boolean") return json(res, 400, { error: "composio must be true or false" });

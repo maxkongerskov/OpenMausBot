@@ -215,9 +215,22 @@ export function TeamLibraryPanel({
       const response = (await api(`/api/teams/import?mode=${importMode}`, {
         method: "POST",
         body: JSON.stringify(pending.manifest),
-      })) as { bots: Bot[]; archivedBots?: Bot[]; archived?: ArchivedTeamBot[] };
+      })) as {
+        bots: Bot[];
+        archivedBots?: Bot[];
+        archived?: ArchivedTeamBot[];
+        teams?: { id: string; name: string; createdAt: number }[];
+        activeTeamId?: string | null;
+      };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
       for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      if (response.teams) {
+        dispatch({
+          type: "teamsHydrated",
+          teams: response.teams,
+          activeTeamId: response.activeTeamId ?? null,
+        });
+      }
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
       track("team_imported", { members: response.bots.length, source, mode: importMode });

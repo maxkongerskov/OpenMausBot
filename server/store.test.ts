@@ -666,3 +666,96 @@ describe("Store task working folder — cloud runs", () => {
     expect(store.pinTaskCwd(bot.id, bot.threadId)).toBeNull();
   });
 });
+
+describe("Store teams", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("creates, renames, and restores a team across restart", () => {
+    const store = new Store(selection);
+    const team = store.createTeam("Engineering");
+    expect(team).toMatchObject({ name: "Engineering" });
+    expect(store.createTeam("engineering")).toBeNull();
+    expect(store.createTeam("")).toBeNull();
+    expect(store.createTeam("E".repeat(61))).toBeNull();
+
+    const bot = store.createBot({ name: "Scout", teamId: team!.id });
+    expect(bot.teamId).toBe(team!.id);
+    expect(bot.section).toBe("Engineering");
+
+    expect(store.renameTeam(team!.id, "Platform")).toMatchObject({ name: "Platform" });
+    expect(store.bot(bot.id)?.section).toBe("Platform");
+    expect(store.setActiveTeam(team!.id)).toBe(true);
+    expect(store.renameTeam(team!.id, "Platform")).toMatchObject({ name: "Platform" });
+    expect(store.renameTeam(team!.id, "")).toBeNull();
+
+    const reloaded = new Store(selection);
+    expect(reloaded.teams).toEqual([expect.objectContaining({ id: team!.id, name: "Platform" })]);
+    expect(reloaded.activeTeamId).toBe(team!.id);
+    expect(reloaded.bot(bot.id)).toMatchObject({ teamId: team!.id, section: "Platform" });
+  });
+
+  it("promotes leftover section labels into teams on load", () => {
+    const store = new Store(selection);
+    const scout = store.createBot({ name: "Scout" });
+    const copy = store.createBot({ name: "Copy" });
+    const spare = store.createBot({ name: "Spare" });
+    store.patchBot(scout.id, { section: "Engineering" });
+    store.patchBot(copy.id, { section: "Marketing" });
+    const room = store.createGroup("Standup", [scout.id, spare.id]);
+
+    const reloaded = new Store(selection);
+    const engineering = reloaded.teams.find((team) => team.name === "Engineering");
+    const marketing = reloaded.teams.find((team) => team.name === "Marketing");
+    expect(engineering).toBeTruthy();
+    expect(marketing).toBeTruthy();
+    expect(reloaded.bot(scout.id)?.teamId).toBe(engineering!.id);
+    expect(reloaded.bot(copy.id)?.teamId).toBe(marketing!.id);
+    expect(reloaded.bot(spare.id)?.teamId).toBeUndefined();
+    // mixed-member room stays unassigned
+    expect(reloaded.group(room.id)?.teamId).toBeUndefined();
+  });
+
+  it("assigns a room to a team when every member already belongs", () => {
+    const store = new Store(selection);
+    const team = store.createTeam("Engineering")!;
+    const scout = store.createBot({ name: "Scout", teamId: team.id });
+    const reviewer = store.createBot({ name: "Reviewer", teamId: team.id });
+    store.createGroup("Standup", [scout.id, reviewer.id]);
+    const groupsFile = join(DATA_DIR, "groups.json");
+    const saved = JSON.parse(readFileSync(groupsFile, "utf8"));
+    delete saved[0].teamId;
+    writeFileSync(groupsFile, JSON.stringify(saved));
+
+    const reloaded = new Store(selection);
+    expect(reloaded.groups[0]?.teamId).toBe(team.id);
+  });
+
+  it("deleteTeam unassigns members and clears the active team", () => {
+    const store = new Store(selection);
+    const team = store.createTeam("Engineering")!;
+    const bot = store.createBot({ name: "Scout", teamId: team.id });
+    const group = store.createGroup("Standup", [bot.id]);
+    store.patchGroup(group.id, { teamId: team.id });
+    store.setActiveTeam(team.id);
+
+    expect(store.deleteTeam(team.id)).toBe(true);
+    expect(store.teams).toEqual([]);
+    expect(store.activeTeamId).toBeNull();
+    expect(store.bot(bot.id)?.teamId).toBeUndefined();
+    expect(store.bot(bot.id)?.section).toBeUndefined();
+    expect(store.group(group.id)?.teamId).toBeUndefined();
+    expect(store.bot(bot.id)?.name).toBe("Scout");
+
+    const reloaded = new Store(selection);
+    expect(reloaded.teams).toEqual([]);
+    expect(reloaded.bot(bot.id)?.name).toBe("Scout");
+  });
+
+  it("createTeamNamed numbers colliding import names", () => {
+    const store = new Store(selection);
+    store.createTeam("Field Team");
+    expect(store.createTeamNamed("Field Team").name).toBe("Field Team 2");
+  });
+});

@@ -1,5 +1,5 @@
 import { track } from "@/lib/analytics";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -8,6 +8,7 @@ import {
   Bot as BotIcon,
   CalendarDays,
   Check,
+  ChevronsUpDown,
   ClipboardCopy,
   Copy,
   Crown,
@@ -33,7 +34,8 @@ import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
-import { downloadAllBots } from "@/lib/team-files";
+import { downloadAllBots, downloadTeam } from "@/lib/team-files";
+import { botInActiveTeam, groupInActiveTeam } from "@/lib/team-scope";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
@@ -284,7 +286,14 @@ function RoomContextMenu({
 function NewRoomPanel({ onClose }: { onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [picked, setPicked] = useState<Set<string>>(
+    () =>
+      new Set(
+        state.activeTeamId
+          ? state.bots.filter((b) => !b.hidden && b.teamId === state.activeTeamId).map((b) => b.id)
+          : [],
+      ),
+  );
   const bots = state.bots.filter((b) => !b.hidden);
   const toggle = (id: string) =>
     setPicked((prev) => {
@@ -295,7 +304,12 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
     });
   const create = () => {
     if (!picked.size) return;
-    dispatch({ type: "createGroup", memberIds: [...picked], name: name.trim() || undefined });
+    dispatch({
+      type: "createGroup",
+      memberIds: [...picked],
+      name: name.trim() || undefined,
+      teamId: state.activeTeamId ?? undefined,
+    });
     track("room_created", { members: picked.size });
     onClose();
   };
@@ -352,23 +366,8 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Labeled divider between sidebar sections. Same typographic register as
- * EngineGroupLabel so the sidebar reads as one system. */
-function SectionDivider({ name }: { name: string }) {
-  return (
-    <div className="flex items-center gap-2 px-3 pb-1 pt-3 first:pt-0" data-section={name}>
-      <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        {name}
-      </span>
-      <span className="h-px flex-1 bg-hairline/40" />
-    </div>
-  );
-}
-
-/** Move-to-section popover: existing sections as chips (checkmark on the
- * bot's current one), a create field, and a remove action. Mirrors the
- * context menu's fixed positioning + dismiss-on-outside-click contract. */
-function SectionPicker({
+/** Move-to-team popover: existing teams, a create field, and a remove action. */
+function TeamPicker({
   botId,
   anchor,
   onClose,
@@ -384,7 +383,7 @@ function SectionPicker({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-section-picker]")) onClose();
+      if (!(e.target as HTMLElement).closest("[data-team-picker]")) onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
@@ -398,11 +397,30 @@ function SectionPicker({
   }, [onClose]);
 
   if (!bot) return null;
-  // hidden bots can carry a stale assignment; don't offer it as a section
-  const sections = [...new Set(state.bots.filter((b) => !b.hidden && b.section).map((b) => b.section!))];
 
-  const assign = (section: string) => {
-    dispatch({ type: "updateBot", botId, patch: { section } });
+  const assign = (teamId: string) => {
+    dispatch({ type: "updateBot", botId, patch: { teamId } });
+    onClose();
+  };
+
+  const createAndAssign = () => {
+    if (!trimmed || trimmed.length > 60) return;
+    api("/api/teams", { method: "POST", body: JSON.stringify({ name: trimmed, activate: false }) })
+      .then(
+        ({
+          team,
+          teams,
+          activeTeamId,
+        }: {
+          team: { id: string };
+          teams: { id: string; name: string; createdAt: number }[];
+          activeTeamId: string | null;
+        }) => {
+          dispatch({ type: "teamsHydrated", teams, activeTeamId });
+          dispatch({ type: "updateBot", botId, patch: { teamId: team.id } });
+        },
+      )
+      .catch(() => {});
     onClose();
   };
 
@@ -411,26 +429,26 @@ function SectionPicker({
 
   return (
     <div
-      data-section-picker
+      data-team-picker
       style={{ top, left }}
       className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        Move to section
+        Move to team
       </div>
-      {sections.length > 0 && (
+      {state.teams.length > 0 && (
         <div className="flex flex-col gap-0.5 px-1.5 py-1">
-          {sections.map((section) => (
+          {state.teams.map((team) => (
             <button
-              key={section}
-              onClick={() => assign(section)}
+              key={team.id}
+              onClick={() => assign(team.id)}
               className={cn(
                 "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-                section === bot.section ? "bg-raised text-ink" : "text-ink hover:bg-raised/70",
+                team.id === bot.teamId ? "bg-raised text-ink" : "text-ink hover:bg-raised/70",
               )}
             >
-              <span className="truncate">{section}</span>
-              {section === bot.section && <Check size={14} className="shrink-0 text-accent" />}
+              <span className="truncate">{team.name}</span>
+              {team.id === bot.teamId && <Check size={14} className="shrink-0 text-accent" />}
             </button>
           ))}
         </div>
@@ -439,8 +457,7 @@ function SectionPicker({
         className="flex items-center gap-1.5 px-2.5 py-1"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!trimmed || trimmed.length > 60) return;
-          assign(trimmed);
+          createAndAssign();
         }}
       >
         <input
@@ -448,8 +465,8 @@ function SectionPicker({
           maxLength={60}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New section…"
-          aria-label="New section name"
+          placeholder="New team…"
+          aria-label="New team name"
           className="w-full rounded-lg bg-raised/70 px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <button
@@ -463,21 +480,72 @@ function SectionPicker({
           Add
         </button>
       </form>
-      {bot.section && (
+      {bot.teamId && (
         <>
           <div className="mx-2 my-1 border-t border-hairline/40" />
           <button
             onClick={() => {
-              dispatch({ type: "updateBot", botId, patch: { section: "" } });
+              dispatch({ type: "updateBot", botId, patch: { teamId: "" } });
               onClose();
             }}
             className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
-            Remove from section
+            Remove from team
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+function NewTeamPanel({
+  onClose,
+  title = "New team",
+  initialName = "",
+  confirmLabel = "Create team",
+  onSubmit,
+}: {
+  onClose: () => void;
+  title?: string;
+  initialName?: string;
+  confirmLabel?: string;
+  onSubmit: (name: string) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const trimmed = name.trim();
+  const submit = () => {
+    if (!trimmed || trimmed.length > 60) return;
+    onSubmit(trimmed);
+    onClose();
+  };
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
+        <div className="mb-3 text-[15px] font-semibold text-ink">{title}</div>
+        <input
+          autoFocus
+          maxLength={60}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder="Team name"
+          className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+        />
+        <button
+          onClick={submit}
+          disabled={!trimmed}
+          className="w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+        >
+          {confirmLabel}
+        </button>
+      </div>
     </div>
   );
 }
@@ -572,7 +640,7 @@ function BotContextMenu({
             hint: !bot.chiefOfStaff && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
           },
         ),
-        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
+        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to team", () => {
           onClose();
           onMoveToSection(bot.id);
         }),
@@ -873,10 +941,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const { capabilities } = useDesktopCapabilities();
   const importReturnRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [sectionPicker, setSectionPicker] = useState<MenuState | null>(null);
+  const [teamPicker, setTeamPicker] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
+  const [newTeam, setNewTeam] = useState(false);
+  const [renameTeam, setRenameTeam] = useState(false);
   const [teamLibraryOpen, setTeamLibraryOpen] = useState(false);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
@@ -907,12 +978,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     return () => window.clearTimeout(timer);
   }, [teamFeedback]);
 
-  const exportAllBots = async () => {
+  const exportCurrentTeam = async () => {
     setExportingTeam(true);
     setTeamFeedback(null);
     try {
-      const exported = await downloadAllBots();
-      track("team_exported", { members: exported.members, scope: "all_visible" });
+      const active = state.teams.find((team) => team.id === state.activeTeamId);
+      const exported = active
+        ? await downloadTeam({ teamId: active.id, name: active.name })
+        : await downloadAllBots();
+      track("team_exported", {
+        members: exported.members,
+        scope: active ? "active_team" : "all_visible",
+      });
       setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
     } catch (cause) {
       setTeamFeedback({
@@ -1013,7 +1090,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   // section below the list (debounced, lands on the message).
 
   const matchingBots = state.bots
-    .filter((b) => !b.hidden)
+    .filter((b) => botInActiveTeam(b, state.activeTeamId))
     .filter(
       (b) =>
         !q ||
@@ -1022,23 +1099,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         preview(b).toLowerCase().includes(q),
     );
   const chiefBot = matchingBots.find((bot) => bot.chiefOfStaff);
-  const sectionedBots = matchingBots
-    .filter((bot) => !bot.chiefOfStaff && bot.section)
-    .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
   const visibleBots = matchingBots
-    .filter((bot) => !bot.chiefOfStaff && !bot.section)
+    .filter((bot) => !bot.chiefOfStaff)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
-  // sections keep first-appearance order within the current list; a section
-  // whose bots all moved away (or fell out of the filter) simply vanishes
-  const sectionNames: string[] = [];
-  for (const bot of sectionedBots) {
-    if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
-  }
-  const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  const visibleGroups = state.groups
+    .filter((g) => groupInActiveTeam(g, state.bots, state.activeTeamId))
+    .filter((g) => !q || g.name.toLowerCase().includes(q));
   const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
   const archivedBots = state.bots.filter((bot) => bot.hidden);
   const pendingTeamUndo = teamFeedback?.undo;
   const pendingBotUndo = teamFeedback?.restoreBot;
+  const activeTeam = state.teams.find((team) => team.id === state.activeTeamId) ?? null;
+  const switcherLabel = activeTeam?.name ?? "All bots";
+  const teamCount = (teamId: string | null) => state.bots.filter((bot) => botInActiveTeam(bot, teamId)).length;
+  const teamUnread = (teamId: string | null) =>
+    state.bots.some((bot) => bot.unread && botInActiveTeam(bot, teamId));
+  const exportLabel = activeTeam ? `Export ${activeTeam.name}` : "Export all bots";
+  const rosterEmpty = !chiefBot && visibleBots.length === 0 && visibleGroups.length === 0;
 
   return (
     <aside
@@ -1110,13 +1187,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <button
                   onClick={() => {
                     setPlusOpen(false);
-                    void exportAllBots();
+                    void exportCurrentTeam();
                   }}
                   disabled={exportingTeam}
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
-                  {exportingTeam ? "Exporting…" : "Export all bots"}
+                  {exportingTeam ? "Exporting…" : exportLabel}
                 </button>
                 <button
                   onClick={() => {
@@ -1147,6 +1224,128 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       </div>
 
+      <div className="relative px-3 pt-1">
+        <button
+          type="button"
+          onClick={() => {
+            setPlusOpen(false);
+            setSwitcherOpen((open) => !open);
+          }}
+          aria-haspopup="menu"
+          aria-expanded={switcherOpen}
+          aria-label="Switch team"
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-raised/50"
+        >
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{switcherLabel}</span>
+          <span className="text-[12px] text-ink-secondary">{teamCount(state.activeTeamId)}</span>
+          {teamUnread(state.activeTeamId) ? <span className="size-1.5 rounded-full bg-accent" /> : null}
+          <ChevronsUpDown size={14} className="shrink-0 text-ink-secondary" />
+        </button>
+        {switcherOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onMouseDown={() => setSwitcherOpen(false)} />
+            <div
+              role="menu"
+              className="absolute left-3 right-3 top-full z-40 mt-1 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
+            >
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSwitcherOpen(false);
+                  dispatch({ type: "setActiveTeam", teamId: null });
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3.5 py-2 text-left text-[14px] hover:bg-raised/70",
+                  !activeTeam ? "text-ink" : "text-ink",
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate">All bots</span>
+                <span className="text-[12px] text-ink-secondary">{teamCount(null)}</span>
+                {teamUnread(null) ? <span className="size-1.5 rounded-full bg-accent" /> : null}
+                {!activeTeam && <Check size={14} className="shrink-0 text-accent" />}
+              </button>
+              {state.teams.map((team) => (
+                <button
+                  key={team.id}
+                  role="menuitem"
+                  onClick={() => {
+                    setSwitcherOpen(false);
+                    dispatch({ type: "setActiveTeam", teamId: team.id });
+                  }}
+                  className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                >
+                  <span className="min-w-0 flex-1 truncate">{team.name}</span>
+                  <span className="text-[12px] text-ink-secondary">{teamCount(team.id)}</span>
+                  {teamUnread(team.id) ? <span className="size-1.5 rounded-full bg-accent" /> : null}
+                  {team.id === state.activeTeamId && <Check size={14} className="shrink-0 text-accent" />}
+                </button>
+              ))}
+              <div className="mx-2 my-1 border-t border-hairline/40" />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSwitcherOpen(false);
+                  setNewTeam(true);
+                }}
+                className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+              >
+                <Plus size={16} className="text-ink-secondary" />
+                New team
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSwitcherOpen(false);
+                  setTeamLibraryOpen(true);
+                }}
+                className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+              >
+                <Library size={16} className="text-ink-secondary" />
+                Import from library…
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSwitcherOpen(false);
+                  void exportCurrentTeam();
+                }}
+                disabled={exportingTeam || teamCount(state.activeTeamId) === 0}
+                className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70 disabled:opacity-40"
+              >
+                {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
+                {exportingTeam ? "Exporting…" : exportLabel}
+              </button>
+              {activeTeam && (
+                <>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setSwitcherOpen(false);
+                      setRenameTeam(true);
+                    }}
+                    className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  >
+                    <Pencil size={16} className="text-ink-secondary" />
+                    Rename {activeTeam.name}
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setSwitcherOpen(false);
+                      dispatch({ type: "deleteTeam", teamId: activeTeam.id });
+                    }}
+                    className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
+                  >
+                    <Trash2 size={16} />
+                    Delete team
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Search */}
       <div className="px-3 pt-2 pb-3">
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
@@ -1155,8 +1354,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder="Search"
-            aria-label="Search bots and messages"
+            placeholder={activeTeam ? "Search this team" : "Search"}
+            aria-label={activeTeam ? "Search this team" : "Search bots and messages"}
             className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
           />
         </div>
@@ -1165,8 +1364,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {!chiefBot && visibleBots.length === 0 && sectionedBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
+          {rosterEmpty && q && q.length < MIN_QUERY && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
+          )}
+          {rosterEmpty && !q && (
+            <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
+              {activeTeam ? "No bots in this team yet" : "Create a bot to get started"}
+            </div>
           )}
           {chiefBot && (
             <div className="mb-1.5">
@@ -1189,22 +1393,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               onArchive={(bot) => void archiveBot(bot)}
               archiveDisabled={activeBotCount <= 1}
             />
-          ))}
-          {sectionNames.map((name) => (
-            <Fragment key={name}>
-              <SectionDivider name={name} />
-              {sectionedBots
-                .filter((b) => b.section === name)
-                .map((b) => (
-                  <BotListItem
-                    key={b.id}
-                    bot={b}
-                    onMenu={setMenu}
-                    onArchive={(bot) => void archiveBot(bot)}
-                    archiveDisabled={activeBotCount <= 1}
-                  />
-                ))}
-            </Fragment>
           ))}
           <SearchResults query={query} onLanded={() => setQuery("")} />
         </div>
@@ -1258,11 +1446,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={menu}
           onClose={() => setMenu(null)}
           onArchive={(bot) => void archiveBot(bot)}
-          onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
+          onMoveToSection={(botId) => setTeamPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
-      {sectionPicker && (
-        <SectionPicker botId={sectionPicker.botId} anchor={sectionPicker} onClose={() => setSectionPicker(null)} />
+      {teamPicker && (
+        <TeamPicker botId={teamPicker.botId} anchor={teamPicker} onClose={() => setTeamPicker(null)} />
       )}
       {roomMenu && (
         <RoomContextMenu
@@ -1271,6 +1459,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {newTeam && (
+        <NewTeamPanel
+          onClose={() => setNewTeam(false)}
+          onSubmit={(name) => dispatch({ type: "createTeam", name })}
+        />
+      )}
+      {renameTeam && activeTeam && (
+        <NewTeamPanel
+          title="Rename team"
+          confirmLabel="Rename"
+          initialName={activeTeam.name}
+          onClose={() => setRenameTeam(false)}
+          onSubmit={(name) => dispatch({ type: "renameTeam", teamId: activeTeam.id, name })}
+        />
+      )}
       {archivedBotsOpen && (
         <ArchivedBotsPanel
           bots={archivedBots}

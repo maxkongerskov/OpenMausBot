@@ -451,6 +451,57 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
+  it("creates, switches, and exports a named team", async () => {
+    const created = await api("POST", "/api/teams", { name: "  Field Ops  " });
+    expect(created.status).toBe(201);
+    expect(created.body.team).toMatchObject({ name: "Field Ops" });
+    expect(created.body.activeTeamId).toBe(created.body.team.id);
+    expect((await api("POST", "/api/teams", { name: "field ops" })).status).toBe(409);
+    expect((await api("POST", "/api/teams", { name: "" })).status).toBe(400);
+    expect((await api("POST", "/api/teams", { name: "T".repeat(61) })).status).toBe(400);
+
+    const teamId = created.body.team.id as string;
+    const inTeam = (await api("POST", "/api/bots", { teamId })).body.bot;
+    expect(inTeam.teamId).toBe(teamId);
+    expect(inTeam.section).toBe("Field Ops");
+    const outsider = (await api("POST", "/api/bots")).body.bot;
+    expect(outsider.teamId).toBeNull();
+    expect((await api("POST", "/api/bots", { teamId: "missing" })).status).toBe(400);
+
+    const room = (
+      await api("POST", "/api/groups", { name: "Standup", memberIds: [inTeam.id], teamId })
+    ).body.group;
+    expect(room.teamId).toBe(teamId);
+
+    const exported = await api("POST", "/api/teams/export", { teamId });
+    expect(exported.status).toBe(200);
+    expect(exported.body.team.name).toBe("Field Ops");
+    expect(exported.body.team.members.map((member: { name: string }) => member.name)).toEqual([inTeam.name]);
+
+    const renamed = await api("PATCH", `/api/teams/${teamId}`, { name: "Ops" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.team.name).toBe("Ops");
+    expect((await api("GET", "/api/bots")).body.bots.find((bot: { id: string }) => bot.id === inTeam.id).section).toBe(
+      "Ops",
+    );
+
+    const all = await api("POST", "/api/teams/active", { id: null });
+    expect(all.status).toBe(200);
+    expect(all.body.activeTeamId).toBeNull();
+    expect((await api("GET", "/api/bots")).body.activeTeamId).toBeNull();
+
+    const removed = await api("DELETE", `/api/teams/${teamId}`);
+    expect(removed.status).toBe(200);
+    const state = (await api("GET", "/api/bots")).body;
+    expect(state.teams.find((team: { id: string }) => team.id === teamId)).toBeUndefined();
+    expect(state.bots.find((bot: { id: string }) => bot.id === inTeam.id).teamId).toBeNull();
+    expect(state.groups.find((group: { id: string }) => group.id === room.id).teamId).toBeNull();
+
+    await api("DELETE", `/api/bots/${inTeam.id}`);
+    await api("DELETE", `/api/bots/${outsider.id}`);
+    await api("DELETE", `/api/groups/${room.id}`);
+  });
+
   it("saves, serves, and guards image attachments", async () => {
     // a real 1x1 PNG so the bytes round-trip intact
     const png = Buffer.from(
