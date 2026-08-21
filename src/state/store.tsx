@@ -687,7 +687,7 @@ export function reducer(state: AppState, action: Action): AppState {
         : animated;
       const switchedThread =
         typeof action.bot.threadId === "string" && action.bot.threadId !== before.threadId;
-      return updateBot(next, action.bot.id, (b) => ({
+      const patched = updateBot(next, action.bot.id, (b) => ({
         ...b,
         ...action.bot,
         // Ordinary bot patches omit messages and must preserve the current
@@ -699,6 +699,16 @@ export function reducer(state: AppState, action: Action): AppState {
             ? action.bot.messages
             : b.messages,
       }));
+      if ((before.teamId ?? null) === (action.bot.teamId ?? null)) return patched;
+      return {
+        ...patched,
+        selectedId: firstVisibleSelection(
+          patched.bots,
+          patched.groups,
+          patched.activeTeamId,
+          patched.selectedId,
+        ),
+      };
     }
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -880,7 +890,17 @@ export function reducer(state: AppState, action: Action): AppState {
           }
         : animated;
       const { acknowledgeLocalAuto: _ack, ...botPatch } = action.patch;
-      return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
+      const patched = updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
+      if (!Object.prototype.hasOwnProperty.call(action.patch, "teamId")) return patched;
+      return {
+        ...patched,
+        selectedId: firstVisibleSelection(
+          patched.bots,
+          patched.groups,
+          patched.activeTeamId,
+          patched.selectedId,
+        ),
+      };
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -1117,6 +1137,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      const previousActiveTeamId = stateRef.current.activeTeamId;
       const botBeforeUpdate =
         action.type === "updateBot"
           ? stateRef.current.bots.find((candidate) => candidate.id === action.botId)
@@ -1384,7 +1405,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api("/api/teams/active", {
             method: "POST",
             body: JSON.stringify({ id: action.teamId }),
-          }).catch(showError);
+          })
+            .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) =>
+              rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
+            )
+            .catch((error: unknown) => {
+              showError(error);
+              rawDispatch({
+                type: "teamsHydrated",
+                teams: stateRef.current.teams,
+                activeTeamId: previousActiveTeamId,
+              });
+            });
           break;
         case "updateBot": {
           if (botBeforeUpdate) {

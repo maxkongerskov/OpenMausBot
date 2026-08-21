@@ -143,4 +143,20 @@ describe("team switcher", () => {
     expect(switched.activeTeamId).toBe("mkt");
     expect(switched.selectedId).toBe("copy");
   });
+
+  it("moves selection when the open bot leaves the active team", () => {
+    const scout = bot("scout", "eng");
+    const tester = bot("tester", "eng");
+    const start = reducer(initialState, {
+      type: "hydrate",
+      bots: [scout, tester],
+      groups: [],
+      teams: [{ id: "eng", name: "Engineering", createdAt: 1 }],
+      activeTeamId: "eng",
+      computerControl: {},
+    });
+    const selected = reducer(start, { type: "select", id: "scout" });
+    const moved = reducer(selected, { type: "updateBot", botId: "scout", patch: { teamId: "" } });
+    expect(moved.selectedId).toBe("tester");
+  });
 });

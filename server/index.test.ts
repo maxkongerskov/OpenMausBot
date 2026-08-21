@@ -474,6 +474,9 @@ describe("harness HTTP API", () => {
     expect((await api("POST", "/api/teams", { name: "T".repeat(61) })).status).toBe(400);
 
     const teamId = created.body.team.id as string;
+    const emptyExport = await api("POST", "/api/teams/export", { teamId });
+    expect(emptyExport.status).toBe(400);
+    expect(emptyExport.body.error).toBe("Field Ops has no bots to export");
     const inTeam = (await api("POST", "/api/bots", { teamId })).body.bot;
     expect(inTeam.teamId).toBe(teamId);
     expect(inTeam.section).toBe("Field Ops");

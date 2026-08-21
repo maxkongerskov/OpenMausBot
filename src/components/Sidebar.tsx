@@ -395,10 +395,12 @@ function TeamPicker({
   botId,
   anchor,
   onClose,
+  onError,
 }: {
   botId: string;
   anchor: MenuState;
   onClose: () => void;
+  onError: (text: string) => void;
 }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
@@ -442,10 +444,12 @@ function TeamPicker({
         }) => {
           dispatch({ type: "teamsHydrated", teams, activeTeamId });
           dispatch({ type: "updateBot", botId, patch: { teamId: team.id } });
+          onClose();
         },
       )
-      .catch(() => {});
-    onClose();
+      .catch((cause: unknown) => {
+        onError(cause instanceof Error ? cause.message : String(cause));
+      });
   };
 
   const top = Math.max(8, Math.min(anchor.y, window.innerHeight - 300));
@@ -1038,6 +1042,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [open, onClose]);
 
   useEffect(() => {
+    if (!switcherOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setSwitcherOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [switcherOpen]);
+
+  useEffect(() => {
     if (!densityOpen) return;
     const closeDensityMenu = (event: KeyboardEvent) => {
       if (event.key === "Escape") setDensityOpen(false);
@@ -1328,8 +1344,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     setPlusOpen(false);
                     void exportCurrentTeam();
                   }}
-                  disabled={exportingTeam}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  disabled={exportingTeam || teamCount(state.activeTeamId) === 0}
+                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70 disabled:opacity-40"
                 >
                   {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
                   {exportingTeam ? "Exporting…" : exportLabel}
@@ -1393,10 +1409,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   setSwitcherOpen(false);
                   dispatch({ type: "setActiveTeam", teamId: null });
                 }}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3.5 py-2 text-left text-[14px] hover:bg-raised/70",
-                  !activeTeam ? "text-ink" : "text-ink",
-                )}
+                className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
               >
                 <span className="min-w-0 flex-1 truncate">All bots</span>
                 <span className="text-[12px] text-ink-secondary">{teamCount(null)}</span>
@@ -1471,6 +1484,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     role="menuitem"
                     onClick={() => {
                       setSwitcherOpen(false);
+                      if (!window.confirm(`Delete ${activeTeam.name}? Bots stay; they just leave the team.`)) return;
                       dispatch({ type: "deleteTeam", teamId: activeTeam.id });
                     }}
                     className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
@@ -1598,7 +1612,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {teamPicker && (
-        <TeamPicker botId={teamPicker.botId} anchor={teamPicker} onClose={() => setTeamPicker(null)} />
+        <TeamPicker
+          botId={teamPicker.botId}
+          anchor={teamPicker}
+          onClose={() => setTeamPicker(null)}
+          onError={(text) => setTeamFeedback({ error: true, text })}
+        />
       )}
       {roomMenu && (
         <RoomContextMenu

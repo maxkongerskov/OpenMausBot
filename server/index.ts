@@ -2881,7 +2881,10 @@ const server = createServer(async (req, res) => {
         if (!ids) activePaths.set(threadId, (ids = new Set(store.activePath(threadId).map((m) => m.id))));
         return ids.has(messageId);
       };
-      const hits = searchMessages(q, limit)
+      const teamId = url.searchParams.get("teamId");
+      if (teamId && !store.team(teamId)) return json(res, 404, { error: "no such team" });
+      const pool = teamId ? Math.min(Math.max(limit * 10, 200), 1000) : limit;
+      const hits = searchMessages(q, pool)
         .map((hit) => {
           const bot = store.botByThread(hit.threadId);
           const group = bot ? undefined : store.groupByThread(hit.threadId);
@@ -2894,7 +2897,25 @@ const server = createServer(async (req, res) => {
           if (group) return { ...hit, groupId: group.id, name: group.name, onActivePath: active };
           return null;
         })
-        .filter((hit): hit is NonNullable<typeof hit> => hit !== null);
+        .filter((hit): hit is NonNullable<typeof hit> => hit !== null)
+        .filter((hit) => {
+          if (!teamId) return true;
+          if ("botId" in hit) {
+            const owner = store.bot(hit.botId);
+            return Boolean(owner && !owner.hidden && owner.teamId === teamId);
+          }
+          if ("groupId" in hit) {
+            const room = store.group(hit.groupId);
+            if (!room) return false;
+            if (room.teamId) return room.teamId === teamId;
+            const members = room.memberIds
+              .map((id) => store.bot(id))
+              .filter((member): member is NonNullable<typeof member> => member != null && !member.hidden);
+            return members.length > 0 && members.every((member) => member.teamId === teamId);
+          }
+          return false;
+        })
+        .slice(0, limit);
       return json(res, 200, { hits });
     }
 
@@ -3010,6 +3031,7 @@ const server = createServer(async (req, res) => {
         if (!team) return json(res, 404, { error: "no such team" });
         memberIds = store.bots.filter((bot) => !bot.hidden && bot.teamId === team.id).map((bot) => bot.id);
         if (typeof body.name !== "string" || !body.name.trim()) name = team.name;
+        if (memberIds.length === 0) return json(res, 400, { error: `${team.name} has no bots to export` });
       }
       if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
@@ -3103,6 +3125,8 @@ const server = createServer(async (req, res) => {
             .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }))
         : [];
       const importedBots: ReturnType<typeof store.createBot>[] = [];
+      const previousActiveTeamId = store.activeTeamId;
+      let createdTeamId: string | null = null;
       // Names already in use, hidden bots included: an archived bot can be
       // un-archived later, and a revived duplicate would be just as
       // ambiguous then. In replace mode this means re-importing your own
@@ -3134,10 +3158,10 @@ const server = createServer(async (req, res) => {
         });
         // Add into the team you're looking at; replace (or All bots) stands
         // up a team named after the file and switches to it.
-        const hostTeam =
-          importMode === "add" && store.activeTeamId && store.team(store.activeTeamId)
-            ? store.team(store.activeTeamId)!
-            : store.createTeamNamed(manifest.team.name);
+        const existingTeam =
+          importMode === "add" && store.activeTeamId ? store.team(store.activeTeamId) : undefined;
+        const hostTeam = existingTeam ?? store.createTeamNamed(manifest.team.name);
+        if (!existingTeam) createdTeamId = hostTeam.id;
         if (hostTeam.id !== store.activeTeamId) store.setActiveTeam(hostTeam.id);
         for (const created of importedBots) {
           store.patchBot(created.id, { teamId: hostTeam.id, section: hostTeam.name });
@@ -3175,6 +3199,8 @@ const server = createServer(async (req, res) => {
         // throw (disk) after createGroup already saved.
         if (group) store.deleteGroup(group.id);
         for (const bot of importedBots) store.deleteBot(bot.id);
+        if (createdTeamId) store.deleteTeam(createdTeamId);
+        store.setActiveTeam(store.team(previousActiveTeamId ?? "") ? previousActiveTeamId : null);
         throw error;
       }
     }
