@@ -546,6 +546,34 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/groups/${room.id}`);
   });
 
+  it("import add and replace follow the requested team, not a lagging active team", async () => {
+    const home = (await api("POST", "/api/teams", { name: "Lag Home" })).body;
+    const other = (await api("POST", "/api/teams", { name: "Lag Other", activate: false })).body;
+    const homeBot = (await api("POST", "/api/bots", { name: "Lag Keeper", teamId: home.team.id })).body.bot;
+    const otherBot = (await api("POST", "/api/bots", { name: "Lag Guest", teamId: other.team.id })).body.bot;
+    expect((await api("POST", "/api/teams/active", { id: home.team.id })).status).toBe(200);
+
+    const exportedHome = await api("POST", "/api/teams/export", { teamId: home.team.id });
+    const added = await api("POST", `/api/teams/import?mode=add&teamId=${other.team.id}`, exportedHome.body);
+    expect(added.status).toBe(201);
+    expect(added.body.bots[0].teamId).toBe(other.team.id);
+    expect((await api("GET", "/api/bots")).body.bots.find((bot: { id: string }) => bot.id === homeBot.id).hidden).toBeFalsy();
+
+    const exported = await api("POST", "/api/teams/export", { teamId: other.team.id });
+    const replaced = await api("POST", `/api/teams/import?mode=replace&teamId=${other.team.id}`, exported.body);
+    expect(replaced.status).toBe(201);
+    expect(replaced.body.archived.map((bot: { id: string }) => bot.id).sort()).toEqual(
+      [otherBot.id, added.body.bots[0].id].sort(),
+    );
+    expect((await api("GET", "/api/bots")).body.bots.find((bot: { id: string }) => bot.id === homeBot.id).hidden).toBeFalsy();
+
+    for (const bot of [...added.body.bots, ...replaced.body.bots]) await api("DELETE", `/api/bots/${bot.id}`);
+    await api("DELETE", `/api/bots/${homeBot.id}`);
+    await api("DELETE", `/api/bots/${otherBot.id}`);
+    await api("DELETE", `/api/teams/${home.team.id}`);
+    await api("DELETE", `/api/teams/${other.team.id}`);
+  });
+
   it("replace import archives only the active team", async () => {
     const home = (await api("POST", "/api/teams", { name: "Home" })).body;
     const visitor = (await api("POST", "/api/teams", { name: "Visitor", activate: false })).body;

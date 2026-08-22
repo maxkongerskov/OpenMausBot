@@ -213,7 +213,9 @@ export function TeamLibraryPanel({
     setError("");
     try {
       // SAFETY: this endpoint is owned by the app and returns imported bots.
-      const response = (await api(`/api/teams/import?mode=${importMode}`, {
+      const params = new URLSearchParams({ mode: importMode });
+      params.set("teamId", state.activeTeamId ?? "");
+      const response = (await api(`/api/teams/import?${params}`, {
         method: "POST",
         body: JSON.stringify(pending.manifest),
       })) as {

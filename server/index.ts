@@ -3121,6 +3121,15 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: error instanceof Error ? error.message : "Invalid team file" });
       }
 
+      // The client may still have a team switch in flight. Scope add/replace
+      // to the team it asked for, not whatever /api/teams/active last wrote.
+      const requestedScope = url.searchParams.has("teamId") ? url.searchParams.get("teamId") : undefined;
+      let scopeTeamId: string | null;
+      if (requestedScope === undefined) scopeTeamId = store.activeTeamId;
+      else if (!requestedScope) scopeTeamId = null;
+      else if (!store.team(requestedScope)) return json(res, 400, { error: "no such team" });
+      else scopeTeamId = requestedScope;
+
       // Snapshot before creating anything so replace never archives the new
       // team. Old bots are hidden only after every new bot was created; a
       // failed import therefore leaves the current workspace untouched.
@@ -3130,8 +3139,7 @@ const server = createServer(async (req, res) => {
       const archived = importMode === "replace"
         ? store.bots
             .filter(
-              (bot) =>
-                !bot.hidden && (previousActiveTeamId === null || bot.teamId === previousActiveTeamId),
+              (bot) => !bot.hidden && (scopeTeamId === null || bot.teamId === scopeTeamId),
             )
             .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }))
         : [];
@@ -3169,7 +3177,7 @@ const server = createServer(async (req, res) => {
         // Add into the team you're looking at; replace (or All bots) stands
         // up a team named after the file and switches to it.
         const existingTeam =
-          importMode === "add" && store.activeTeamId ? store.team(store.activeTeamId) : undefined;
+          importMode === "add" && scopeTeamId ? store.team(scopeTeamId) : undefined;
         const hostTeam = existingTeam ?? store.createTeamNamed(manifest.team.name);
         if (!existingTeam) createdTeamId = hostTeam.id;
         if (hostTeam.id !== store.activeTeamId) store.setActiveTeam(hostTeam.id);
