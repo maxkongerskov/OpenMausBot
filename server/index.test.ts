@@ -546,6 +546,29 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/groups/${room.id}`);
   });
 
+  it("replace import archives only the active team", async () => {
+    const home = (await api("POST", "/api/teams", { name: "Home" })).body;
+    const visitor = (await api("POST", "/api/teams", { name: "Visitor", activate: false })).body;
+    const homeBot = (await api("POST", "/api/bots", { name: "Keeper", teamId: home.team.id })).body.bot;
+    const otherBot = (await api("POST", "/api/bots", { name: "Guest", teamId: visitor.team.id })).body.bot;
+    expect((await api("POST", "/api/teams/active", { id: home.team.id })).status).toBe(200);
+
+    const exported = await api("POST", "/api/teams/export", { teamId: home.team.id });
+    const replaced = await api("POST", "/api/teams/import?mode=replace", exported.body);
+    expect(replaced.status).toBe(201);
+    expect(replaced.body.archived.map((bot: { id: string }) => bot.id)).toEqual([homeBot.id]);
+
+    const state = (await api("GET", "/api/bots")).body;
+    expect(state.bots.find((bot: { id: string }) => bot.id === homeBot.id).hidden).toBe(true);
+    expect(state.bots.find((bot: { id: string }) => bot.id === otherBot.id).hidden).toBeFalsy();
+
+    for (const bot of replaced.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+    await api("DELETE", `/api/bots/${homeBot.id}`);
+    await api("DELETE", `/api/bots/${otherBot.id}`);
+    await api("DELETE", `/api/teams/${home.team.id}`);
+    await api("DELETE", `/api/teams/${visitor.team.id}`);
+  });
+
   it("saves, serves, and guards image attachments", async () => {
     // a real 1x1 PNG so the bytes round-trip intact
     const png = Buffer.from(
@@ -763,8 +786,14 @@ describe("harness HTTP API", () => {
       expect(invalid.status).toBe(400);
       expect((await api("POST", "/api/teams/import?mode=erase", exported.body)).status).toBe(400);
 
-      const beforeReplace = (await api("GET", "/api/bots")).body.bots.filter(
-        (bot: { hidden?: boolean }) => !bot.hidden,
+      const mid = (await api("GET", "/api/bots")).body;
+      const beforeReplace = mid.bots.filter(
+        (bot: { hidden?: boolean; teamId?: string | null }) =>
+          !bot.hidden && bot.teamId === mid.activeTeamId,
+      );
+      const outsiders = mid.bots.filter(
+        (bot: { hidden?: boolean; teamId?: string | null }) =>
+          !bot.hidden && bot.teamId !== mid.activeTeamId,
       );
       const replaced = await api("POST", "/api/teams/import?mode=replace", exported.body);
       expect(replaced.status).toBe(201);
@@ -773,8 +802,9 @@ describe("harness HTTP API", () => {
       );
       expect(replaced.body.archivedBots.every((bot: { hidden?: boolean }) => bot.hidden)).toBe(true);
       const afterReplace = (await api("GET", "/api/bots")).body.bots;
-      expect(afterReplace.filter((bot: { hidden?: boolean }) => !bot.hidden).map((bot: { id: string }) => bot.id).sort()).toEqual(
-        replaced.body.bots.map((bot: { id: string }) => bot.id).sort(),
+      const visibleAfter = afterReplace.filter((bot: { hidden?: boolean }) => !bot.hidden).map((bot: { id: string }) => bot.id);
+      expect(visibleAfter.sort()).toEqual(
+        [...outsiders.map((bot: { id: string }) => bot.id), ...replaced.body.bots.map((bot: { id: string }) => bot.id)].sort(),
       );
       expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
 

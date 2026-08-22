@@ -159,4 +159,25 @@ describe("team switcher", () => {
     const moved = reducer(selected, { type: "updateBot", botId: "scout", patch: { teamId: "" } });
     expect(moved.selectedId).toBe("tester");
   });
+
+  it("teamsListed refreshes names without rewinding the active team", () => {
+    const start = reducer(initialState, {
+      type: "hydrate",
+      bots: [bot("scout", "eng")],
+      groups: [],
+      teams: [{ id: "eng", name: "Engineering", createdAt: 1 }],
+      activeTeamId: "eng",
+      computerControl: {},
+    });
+    const listed = reducer(start, {
+      type: "teamsListed",
+      teams: [
+        { id: "eng", name: "Platform", createdAt: 1 },
+        { id: "mkt", name: "Marketing", createdAt: 2 },
+      ],
+    });
+    expect(listed.activeTeamId).toBe("eng");
+    expect(listed.selectedId).toBe("scout");
+    expect(listed.teams.map((team) => team.name)).toEqual(["Platform", "Marketing"]);
+  });
 });

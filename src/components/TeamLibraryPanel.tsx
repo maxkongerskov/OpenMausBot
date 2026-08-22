@@ -1,6 +1,7 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
+import { botInActiveTeam } from "@/lib/team-scope";
 import { api, useStore, type Bot, type Team } from "@/state/store";
 import {
   ArrowLeft,
@@ -103,7 +104,7 @@ export function TeamLibraryPanel({
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
 
-  const currentBotCount = state.bots.filter((bot) => !bot.hidden).length;
+  const currentBotCount = state.bots.filter((bot) => botInActiveTeam(bot, state.activeTeamId)).length;
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);

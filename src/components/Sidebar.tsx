@@ -501,13 +501,11 @@ function TeamPicker({
         ({
           team,
           teams,
-          activeTeamId,
         }: {
           team: { id: string };
           teams: Team[];
-          activeTeamId: string | null;
         }) => {
-          dispatch({ type: "teamsHydrated", teams, activeTeamId });
+          dispatch({ type: "teamsListed", teams });
           dispatch({ type: "updateBot", botId, patch: { teamId: team.id } });
           onClose();
         },

@@ -382,6 +382,7 @@ export type Action =
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
     }
   | { type: "teamsHydrated"; teams: Team[]; activeTeamId: string | null }
+  | { type: "teamsListed"; teams: Team[] }
   | { type: "createTeam"; name: string }
   | { type: "renameTeam"; teamId: string; name: string }
   | { type: "deleteTeam"; teamId: string }
@@ -537,6 +538,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const selectedId = firstVisibleSelection(state.bots, state.groups, action.activeTeamId, state.selectedId);
       return { ...state, teams: action.teams, activeTeamId: action.activeTeamId, selectedId };
     }
+    case "teamsListed":
+      return { ...state, teams: action.teams };
     case "setActiveTeam": {
       const selectedId = firstVisibleSelection(state.bots, state.groups, action.teamId, state.selectedId);
       return { ...state, activeTeamId: action.teamId, selectedId, activeView: "chat" };
@@ -1417,9 +1420,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "PATCH",
             body: JSON.stringify({ name: action.name }),
           })
-            .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) =>
-              rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
-            )
+            .then(({ teams }: { teams: Team[] }) => rawDispatch({ type: "teamsListed", teams }))
             .catch(showError);
           break;
         case "deleteTeam":

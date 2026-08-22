@@ -3124,13 +3124,18 @@ const server = createServer(async (req, res) => {
       // Snapshot before creating anything so replace never archives the new
       // team. Old bots are hidden only after every new bot was created; a
       // failed import therefore leaves the current workspace untouched.
+      // A named team replaces that roster only; All bots still replaces
+      // every visible bot.
+      const previousActiveTeamId = store.activeTeamId;
       const archived = importMode === "replace"
         ? store.bots
-            .filter((bot) => !bot.hidden)
+            .filter(
+              (bot) =>
+                !bot.hidden && (previousActiveTeamId === null || bot.teamId === previousActiveTeamId),
+            )
             .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }))
         : [];
       const importedBots: ReturnType<typeof store.createBot>[] = [];
-      const previousActiveTeamId = store.activeTeamId;
       let createdTeamId: string | null = null;
       // Names already in use, hidden bots included: an archived bot can be
       // un-archived later, and a revived duplicate would be just as
