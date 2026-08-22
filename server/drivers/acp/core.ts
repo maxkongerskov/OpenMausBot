@@ -19,6 +19,14 @@ import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 
+/**
+ * A `host::model` pick talks to a loopback server with its own key.
+ * Subscription ACP login (grok.com cached_token) must not fail that turn.
+ */
+export function skipSubscriptionAuthForLocalInject(model: string | undefined): boolean {
+  return Boolean(decodeInjectId(model));
+}
+
 import type {
   DriverCreateInput,
   EffortLevel,
@@ -147,6 +155,10 @@ function decodeAcpConfig(defaultCli: string) {
   };
 }
 
+/**
+ * ACP JSON-RPC-over-stdio driver. Harness differences (argv, auth, catalog)
+ * live in `support`; this is the shared handshake and turn runtime.
+ */
 export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> {
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
@@ -531,11 +543,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
             const methodId = support.pickAuthMethod(methods);
-            // A host:: local pick talks to a loopback server with its own key.
-            // Subscription login (grok.com / cached_token) must not block it —
-            // the same hole Kimi/Droid already closed.
-            const localInject = Boolean(decodeInjectId(turn.model));
-            if (!localInject) {
+            if (!skipSubscriptionAuthForLocalInject(turn.model)) {
               if (methodId) {
                 try {
                   await request("authenticate", { methodId }, INIT_TIMEOUT);

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -71,6 +71,15 @@ const ClassifiedErrorDriver = createAcpDriver({
     error && typeof error === "object" && (error as { code?: unknown }).code === -32000
       ? "invalid_credentials"
       : undefined,
+});
+
+describe("skipSubscriptionAuthForLocalInject", () => {
+  it("is true only for a host:: inject id", () => {
+    expect(skipSubscriptionAuthForLocalInject("omlx::MiniMax-M3-4bit")).toBe(true);
+    expect(skipSubscriptionAuthForLocalInject("unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF")).toBe(true);
+    expect(skipSubscriptionAuthForLocalInject("grok-4.6")).toBe(false);
+    expect(skipSubscriptionAuthForLocalInject(undefined)).toBe(false);
+  });
 });
 
 describe("ACP decodeConfig", () => {
