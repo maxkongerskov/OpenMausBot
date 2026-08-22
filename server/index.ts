@@ -72,6 +72,7 @@ import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import {
   mentionedBots,
+  MAX_TEAM_NAME,
   roomResponders,
   Store,
   type GroupDefaultResponder,
@@ -2987,7 +2988,9 @@ const server = createServer(async (req, res) => {
       if (typeof body.name !== "string") return json(res, 400, { error: "name must be a string" });
       const name = body.name.trim();
       if (!name) return json(res, 400, { error: "A team needs a name" });
-      if (name.length > 60) return json(res, 400, { error: "name must be at most 60 characters" });
+      if (name.length > MAX_TEAM_NAME) {
+        return json(res, 400, { error: `name must be at most ${MAX_TEAM_NAME} characters` });
+      }
       const team = store.createTeam(name);
       if (!team) return json(res, 409, { error: "A team with that name already exists" });
       if (body.activate !== false) store.setActiveTeam(team.id);
@@ -3007,7 +3010,9 @@ const server = createServer(async (req, res) => {
       if (typeof body.name !== "string") return json(res, 400, { error: "name must be a string" });
       const name = body.name.trim();
       if (!name) return json(res, 400, { error: "A team needs a name" });
-      if (name.length > 60) return json(res, 400, { error: "name must be at most 60 characters" });
+      if (name.length > MAX_TEAM_NAME) {
+        return json(res, 400, { error: `name must be at most ${MAX_TEAM_NAME} characters` });
+      }
       const team = store.renameTeam(m[1], name);
       if (!team) return json(res, 409, { error: "A team with that name already exists" });
       return json(res, 200, { team, teams: store.teams, activeTeamId: store.activeTeamId });
@@ -3457,7 +3462,9 @@ const server = createServer(async (req, res) => {
         else {
           const trimmed = body.section.trim();
           if (!trimmed) section = null;
-          else if (trimmed.length > 60) return json(res, 400, { error: "section must be at most 60 characters" });
+          else if (trimmed.length > MAX_TEAM_NAME) {
+            return json(res, 400, { error: `section must be at most ${MAX_TEAM_NAME} characters` });
+          }
           else section = trimmed;
         }
       }
@@ -3490,7 +3497,7 @@ const server = createServer(async (req, res) => {
         if (section === null) patch.teamId = undefined;
         else {
           const team = store.findOrCreateTeam(section);
-          if (!team) return json(res, 400, { error: "section must be at most 60 characters" });
+          if (!team) return json(res, 400, { error: `section must be at most ${MAX_TEAM_NAME} characters` });
           patch.teamId = team.id;
         }
       }

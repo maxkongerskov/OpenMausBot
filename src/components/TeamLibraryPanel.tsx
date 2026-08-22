@@ -1,7 +1,7 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
-import { api, useStore, type Bot } from "@/state/store";
+import { api, useStore, type Bot, type Team } from "@/state/store";
 import {
   ArrowLeft,
   Check,
@@ -219,7 +219,7 @@ export function TeamLibraryPanel({
         bots: Bot[];
         archivedBots?: Bot[];
         archived?: ArchivedTeamBot[];
-        teams?: { id: string; name: string; createdAt: number }[];
+        teams?: Team[];
         activeTeamId?: string | null;
       };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
@@ -231,6 +231,7 @@ export function TeamLibraryPanel({
           activeTeamId: response.activeTeamId ?? null,
         });
       }
+      dispatch({ type: "setActiveTeam", teamId: response.activeTeamId ?? null });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
       track("team_imported", { members: response.bots.length, source, mode: importMode });

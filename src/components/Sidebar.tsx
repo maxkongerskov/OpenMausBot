@@ -30,7 +30,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
+import { api, useStore, formatTime, visibleMessages, type Bot, type Group, type Team } from "@/state/store";
 
 import { BotAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -399,11 +399,14 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
   };
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-room-title"
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Room</div>
+        <div id="new-room-title" className="mb-3 text-[15px] font-semibold text-ink">New Room</div>
         <input
           autoFocus
           value={name}
@@ -464,6 +467,7 @@ function TeamPicker({
 }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
   const bot = state.bots.find((b) => b.id === botId);
   const trimmed = name.trim();
 
@@ -490,7 +494,8 @@ function TeamPicker({
   };
 
   const createAndAssign = () => {
-    if (!trimmed || trimmed.length > 60) return;
+    if (!trimmed || trimmed.length > 60 || creating) return;
+    setCreating(true);
     api("/api/teams", { method: "POST", body: JSON.stringify({ name: trimmed, activate: false }) })
       .then(
         ({
@@ -499,7 +504,7 @@ function TeamPicker({
           activeTeamId,
         }: {
           team: { id: string };
-          teams: { id: string; name: string; createdAt: number }[];
+          teams: Team[];
           activeTeamId: string | null;
         }) => {
           dispatch({ type: "teamsHydrated", teams, activeTeamId });
@@ -509,7 +514,8 @@ function TeamPicker({
       )
       .catch((cause: unknown) => {
         onError(cause instanceof Error ? cause.message : String(cause));
-      });
+      })
+      .finally(() => setCreating(false));
   };
 
   const top = Math.max(8, Math.min(anchor.y, window.innerHeight - 300));
@@ -559,13 +565,13 @@ function TeamPicker({
         />
         <button
           type="submit"
-          disabled={!trimmed || trimmed.length > 60}
+          disabled={!trimmed || trimmed.length > 60 || creating}
           className={cn(
             "shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-medium",
-            trimmed ? "bg-accent text-panel" : "bg-raised/70 text-ink-secondary",
+            trimmed && !creating ? "bg-accent text-panel" : "bg-raised/70 text-ink-secondary",
           )}
         >
-          Add
+          {creating ? "Adding…" : "Add"}
         </button>
       </form>
       {bot.teamId && (
@@ -609,11 +615,14 @@ function NewTeamPanel({
   };
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sidebar-team-dialog-title"
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">{title}</div>
+        <div id="sidebar-team-dialog-title" className="mb-3 text-[15px] font-semibold text-ink">{title}</div>
         <input
           autoFocus
           maxLength={60}
@@ -642,12 +651,12 @@ function BotContextMenu({
   menu,
   onClose,
   onArchive,
-  onMoveToSection,
+  onMoveToTeam,
 }: {
   menu: MenuState;
   onClose: () => void;
   onArchive: (bot: Bot) => void;
-  onMoveToSection: (botId: string) => void;
+  onMoveToTeam: (botId: string) => void;
 }) {
   const { state, dispatch } = useStore();
   const bot = state.bots.find((b) => b.id === menu.botId);
@@ -730,7 +739,7 @@ function BotContextMenu({
         ),
         item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to team", () => {
           onClose();
-          onMoveToSection(bot.id);
+          onMoveToTeam(bot.id);
         }),
         item(<BellDot size={16} className="text-ink-secondary" />, "Mark as Unread", () =>
           dispatch({ type: "markUnread", botId: bot.id }),
@@ -1668,7 +1677,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={menu}
           onClose={() => setMenu(null)}
           onArchive={(bot) => void archiveBot(bot)}
-          onMoveToSection={(botId) => setTeamPicker({ botId, x: menu.x, y: menu.y })}
+          onMoveToTeam={(botId) => setTeamPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
       {teamPicker && (

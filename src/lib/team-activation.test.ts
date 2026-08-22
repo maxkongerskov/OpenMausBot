@@ -54,7 +54,76 @@ describe("team activation queue", () => {
     const started: Array<string | null> = [];
     const inflight: Array<{ id: string | null; wait: ReturnType<typeof deferred<void>> }> = [];
     let server: string | null = "all";
-    const { queue, setCurrent } = makeQueue((id) => {
+    const { queue, setCurrent, applied } = makeQueue((id) => {
+      started.push(id);
+      const wait = deferred<void>();
+      inflight.push({ id, wait });
+      return wait.promise.then(() => {
+        server = id;
+        return { activeTeamId: id };
+      });
+    });
+
+    setCurrent("eng");
+    const first = queue.enqueue("eng", "all");
+    await Promise.resolve();
+    expect(started).toEqual(["eng"]);
+    expect(inflight).toHaveLength(1);
+
+    setCurrent("mkt");
+    const second = queue.enqueue("mkt", "eng");
+    inflight[0]!.wait.resolve();
+    await first;
+    await Promise.resolve();
+    expect(started).toEqual(["eng", "mkt"]);
+    inflight[1]!.wait.resolve();
+    await second;
+
+    expect(server).toBe("mkt");
+    expect(applied).toEqual(["mkt"]);
+  });
+
+  it("does not send a queued switch that a later click already superseded", async () => {
+    const started: Array<string | null> = [];
+    const inflight: Array<{ id: string | null; wait: ReturnType<typeof deferred<void>> }> = [];
+    let server: string | null = "all";
+    const { queue, setCurrent, applied } = makeQueue((id) => {
+      started.push(id);
+      const wait = deferred<void>();
+      inflight.push({ id, wait });
+      return wait.promise.then(() => {
+        server = id;
+        return { activeTeamId: id };
+      });
+    });
+
+    setCurrent("eng");
+    const first = queue.enqueue("eng", "all");
+    await Promise.resolve();
+    expect(started).toEqual(["eng"]);
+
+    setCurrent("mkt");
+    const second = queue.enqueue("mkt", "eng");
+    setCurrent("ops");
+    const third = queue.enqueue("ops", "mkt");
+
+    inflight[0]!.wait.resolve();
+    await first;
+    await second;
+    await Promise.resolve();
+    expect(started).toEqual(["eng", "ops"]);
+    inflight[1]!.wait.resolve();
+    await third;
+
+    expect(server).toBe("ops");
+    expect(applied).toEqual(["ops"]);
+  });
+
+  it("only sends the latest switch when several clicks land before the first request starts", async () => {
+    const started: Array<string | null> = [];
+    const inflight: Array<{ id: string | null; wait: ReturnType<typeof deferred<void>> }> = [];
+    let server: string | null = "all";
+    const { queue, setCurrent, applied } = makeQueue((id) => {
       started.push(id);
       const wait = deferred<void>();
       inflight.push({ id, wait });
@@ -68,19 +137,35 @@ describe("team activation queue", () => {
     const first = queue.enqueue("eng", "all");
     setCurrent("mkt");
     const second = queue.enqueue("mkt", "eng");
+    setCurrent("ops");
+    const third = queue.enqueue("ops", "mkt");
 
-    await Promise.resolve();
-    expect(started).toEqual(["eng"]);
-    expect(inflight).toHaveLength(1);
-
-    inflight[0]!.wait.resolve();
     await first;
-    await Promise.resolve();
-    expect(started).toEqual(["eng", "mkt"]);
-    inflight[1]!.wait.resolve();
     await second;
+    await Promise.resolve();
+    expect(started).toEqual(["ops"]);
+    inflight[0]!.wait.resolve();
+    await third;
 
-    expect(server).toBe("mkt");
+    expect(server).toBe("ops");
+    expect(applied).toEqual(["ops"]);
+  });
+
+  it("is busy until every queued switch has settled", async () => {
+    const wait = deferred<Result>();
+    const queue = createTeamActivationQueue<Result>({
+      request: () => wait.promise,
+      apply: () => {},
+      rollback: () => {},
+      onError: () => {},
+    });
+
+    expect(queue.isBusy()).toBe(false);
+    const job = queue.enqueue("eng", null);
+    expect(queue.isBusy()).toBe(true);
+    wait.resolve({ activeTeamId: "eng" });
+    await job;
+    expect(queue.isBusy()).toBe(false);
   });
 
   it("rolls a failed later switch back to the last confirmed team, not an optimistic one", async () => {
@@ -98,11 +183,11 @@ describe("team activation queue", () => {
 
     setCurrent("eng");
     const first = queue.enqueue("eng", null);
-    setCurrent("mkt");
-    const second = queue.enqueue("mkt", "eng");
-
     await Promise.resolve();
     expect(started).toEqual(["eng"]);
+
+    setCurrent("mkt");
+    const second = queue.enqueue("mkt", "eng");
     inflight[0]!.wait.resolve();
     await first;
     expect(applied).toEqual([]);
@@ -136,22 +221,20 @@ describe("team activation queue", () => {
 
     setCurrent("eng");
     const first = queue.enqueue("eng", null);
+    await Promise.resolve();
     setCurrent(null);
     const allBots = queue.enqueue(null, "eng");
     setCurrent("eng");
     const again = queue.enqueue("eng", null);
 
-    await Promise.resolve();
     inflight[0]!.wait.resolve();
     await first;
     expect(rolledBack).toEqual([]);
     expect(errors).toEqual([]);
 
-    await Promise.resolve();
-    inflight[1]!.wait.resolve();
     await allBots;
     await Promise.resolve();
-    inflight[2]!.wait.resolve();
+    inflight[1]!.wait.resolve();
     await again;
 
     expect(server).toBe("eng");
@@ -181,10 +264,10 @@ describe("team activation queue", () => {
     });
 
     const firstJob = queue.enqueue("eng", null);
+    await Promise.resolve();
     current = "mkt";
     const secondJob = queue.enqueue("mkt", "eng");
 
-    await Promise.resolve();
     first.reject(new Error("eng failed"));
     await firstJob;
     expect(onError).not.toHaveBeenCalled();

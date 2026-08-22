@@ -776,4 +776,32 @@ describe("Store teams", () => {
     store.createTeam("Field Team");
     expect(store.createTeamNamed("Field Team").name).toBe("Field Team 2");
   });
+
+  it("rolling back a replace import restores the previous team and its bots", () => {
+    const store = new Store(selection);
+    const home = store.createTeam("Home")!;
+    store.setActiveTeam(home.id);
+    const scout = store.createBot({ name: "Scout", teamId: home.id });
+    const previousActiveTeamId = store.activeTeamId;
+    const archived = store.bots
+      .filter((bot) => !bot.hidden)
+      .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }));
+
+    const imported = store.createBot({ name: "Visitor" }, { seedMessages: false });
+    store.patchBot(scout.id, { hidden: true, chiefOfStaff: false });
+    const created = store.createTeamNamed("Imported");
+    store.setActiveTeam(created.id);
+    store.patchBot(imported.id, { teamId: created.id, section: created.name });
+
+    store.restoreArchivedBots(archived);
+    store.deleteBot(imported.id);
+    store.deleteTeam(created.id);
+    store.setActiveTeam(store.team(previousActiveTeamId ?? "") ? previousActiveTeamId : null);
+
+    expect(store.activeTeamId).toBe(home.id);
+    expect(store.team(created.id)).toBeUndefined();
+    expect(store.bot(imported.id)).toBeFalsy();
+    expect(store.bot(scout.id)).toMatchObject({ hidden: false, teamId: home.id, name: "Scout" });
+    expect(store.teams.map((team) => team.id)).toEqual([home.id]);
+  });
 });

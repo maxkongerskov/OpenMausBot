@@ -1159,6 +1159,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(patch),
       }).catch(() => {});
     };
+    const claimActiveTeam = (teams: Team[], activeTeamId: string | null) => {
+      rawDispatch({ type: "teamsHydrated", teams, activeTeamId });
+      void teamActivationQueue.enqueue(activeTeamId, stateRef.current.activeTeamId);
+    };
 
     const wrapped: React.Dispatch<Action> = (action) => {
       const previousActiveTeamId = stateRef.current.activeTeamId;
@@ -1404,7 +1408,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "createTeam":
           api("/api/teams", { method: "POST", body: JSON.stringify({ name: action.name }) })
             .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) =>
-              rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
+              claimActiveTeam(teams, activeTeamId),
             )
             .catch(showError);
           break;
@@ -1421,7 +1425,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "deleteTeam":
           api(`/api/teams/${action.teamId}`, { method: "DELETE" })
             .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) =>
-              rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
+              claimActiveTeam(teams, activeTeamId),
             )
             .catch(showError);
           break;
@@ -1592,7 +1596,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({
             type: "teamsHydrated",
             teams: Array.isArray(frame.teams) ? frame.teams : [],
-            activeTeamId: typeof frame.activeTeamId === "string" ? frame.activeTeamId : null,
+            activeTeamId: teamActivationQueue.isBusy()
+              ? stateRef.current.activeTeamId
+              : typeof frame.activeTeamId === "string"
+                ? frame.activeTeamId
+                : null,
           });
           break;
         case "routine":
