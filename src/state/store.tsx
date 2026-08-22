@@ -22,7 +22,7 @@ import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createTeamActivationQueue } from "@/lib/team-activation";
-import { firstVisibleSelection, isCurrentTeamActivation } from "@/lib/team-scope";
+import { firstVisibleSelection } from "@/lib/team-scope";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
 export type { MausColor } from "@/lib/mascot";
@@ -1131,7 +1131,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({ id }),
           }),
-        isCurrent: (requested) => isCurrentTeamActivation(stateRef.current.activeTeamId, requested),
         apply: ({ teams, activeTeamId }) => rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
         rollback: (rollbackTeamId) =>
           rawDispatch({

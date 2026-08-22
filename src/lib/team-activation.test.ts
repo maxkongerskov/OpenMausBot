@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTeamActivationQueue } from "./team-activation";
-import { isCurrentTeamActivation } from "./team-scope";
 
 function deferred<T>() {
   let resolve = (_value: T) => {};
@@ -24,7 +23,6 @@ function makeQueue(request: (teamId: string | null) => Promise<Result>) {
   const errors: Error[] = [];
   const queue = createTeamActivationQueue<Result>({
     request,
-    isCurrent: (requested) => isCurrentTeamActivation(current, requested),
     apply: (result) => {
       current = result.activeTeamId;
       applied.push(result.activeTeamId);
@@ -85,10 +83,10 @@ describe("team activation queue", () => {
     expect(server).toBe("mkt");
   });
 
-  it("does not start the later switch until the earlier request settles, even on failure", async () => {
+  it("rolls a failed later switch back to the last confirmed team, not an optimistic one", async () => {
     const started: Array<string | null> = [];
     const inflight: Array<{ id: string | null; wait: ReturnType<typeof deferred<void>> }> = [];
-    const { queue, setCurrent, applied, rolledBack, errors } = makeQueue((id) => {
+    const harness = makeQueue((id) => {
       started.push(id);
       const wait = deferred<void>();
       inflight.push({ id, wait });
@@ -96,6 +94,7 @@ describe("team activation queue", () => {
         throw new Error(`${id} failed`);
       });
     });
+    const { queue, setCurrent, applied, rolledBack, errors } = harness;
 
     setCurrent("eng");
     const first = queue.enqueue("eng", null);
@@ -115,10 +114,53 @@ describe("team activation queue", () => {
     inflight[1]!.wait.resolve();
     await second;
     expect(errors).toHaveLength(1);
-    expect(rolledBack).toEqual(["eng"]);
+    expect(rolledBack).toEqual([null]);
+    expect(harness.current).toBeNull();
   });
 
-  it("rolls back only the switch that is still on screen", async () => {
+  it("does not let a failed first A rewind A → All bots → A", async () => {
+    const inflight: Array<{ id: string | null; wait: ReturnType<typeof deferred<void>> }> = [];
+    let server: string | null = null;
+    let calls = 0;
+    const harness = makeQueue((id) => {
+      const wait = deferred<void>();
+      const call = ++calls;
+      inflight.push({ id, wait });
+      return wait.promise.then(() => {
+        if (call === 1) throw new Error("first A failed");
+        server = id;
+        return { activeTeamId: id };
+      });
+    });
+    const { queue, setCurrent, applied, rolledBack, errors } = harness;
+
+    setCurrent("eng");
+    const first = queue.enqueue("eng", null);
+    setCurrent(null);
+    const allBots = queue.enqueue(null, "eng");
+    setCurrent("eng");
+    const again = queue.enqueue("eng", null);
+
+    await Promise.resolve();
+    inflight[0]!.wait.resolve();
+    await first;
+    expect(rolledBack).toEqual([]);
+    expect(errors).toEqual([]);
+
+    await Promise.resolve();
+    inflight[1]!.wait.resolve();
+    await allBots;
+    await Promise.resolve();
+    inflight[2]!.wait.resolve();
+    await again;
+
+    expect(server).toBe("eng");
+    expect(harness.current).toBe("eng");
+    expect(applied).toEqual(["eng"]);
+    expect(rolledBack).toEqual([]);
+  });
+
+  it("keeps a later confirmed switch when an earlier request fails", async () => {
     const onError = vi.fn();
     let current: string | null = "eng";
     const first = deferred<Result>();
@@ -129,7 +171,6 @@ describe("team activation queue", () => {
         requests.push(id);
         return id === "eng" ? first.promise : second.promise;
       },
-      isCurrent: (requested) => isCurrentTeamActivation(current, requested),
       apply: (result) => {
         current = result.activeTeamId;
       },
