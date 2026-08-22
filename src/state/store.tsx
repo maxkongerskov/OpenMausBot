@@ -21,6 +21,7 @@ import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib
 import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
+import { createTeamActivationQueue } from "@/lib/team-activation";
 import { firstVisibleSelection, isCurrentTeamActivation } from "@/lib/team-scope";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
@@ -1122,6 +1123,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => botPatchQueue.dispose();
   }, [botPatchQueue]);
 
+  const teamActivationQueue = useMemo(
+    () =>
+      createTeamActivationQueue<{ teams: Team[]; activeTeamId: string | null }>({
+        request: (id) =>
+          api("/api/teams/active", {
+            method: "POST",
+            body: JSON.stringify({ id }),
+          }),
+        isCurrent: (requested) => isCurrentTeamActivation(stateRef.current.activeTeamId, requested),
+        apply: ({ teams, activeTeamId }) => rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
+        rollback: (rollbackTeamId) =>
+          rawDispatch({
+            type: "teamsHydrated",
+            teams: stateRef.current.teams,
+            activeTeamId: rollbackTeamId,
+          }),
+        onError: (error) => {
+          rawDispatch({ type: "error", message: error.message });
+          setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+        },
+      }),
+    [],
+  );
+
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
       rawDispatch({ type: "error", message: e instanceof Error ? e.message : String(e) });
@@ -1402,23 +1427,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch(showError);
           break;
         case "setActiveTeam":
-          api("/api/teams/active", {
-            method: "POST",
-            body: JSON.stringify({ id: action.teamId }),
-          })
-            .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) => {
-              if (!isCurrentTeamActivation(stateRef.current.activeTeamId, action.teamId)) return;
-              rawDispatch({ type: "teamsHydrated", teams, activeTeamId });
-            })
-            .catch((error: unknown) => {
-              if (!isCurrentTeamActivation(stateRef.current.activeTeamId, action.teamId)) return;
-              showError(error);
-              rawDispatch({
-                type: "teamsHydrated",
-                teams: stateRef.current.teams,
-                activeTeamId: previousActiveTeamId,
-              });
-            });
+          void teamActivationQueue.enqueue(action.teamId, previousActiveTeamId);
           break;
         case "updateBot": {
           if (botBeforeUpdate) {
@@ -1431,7 +1440,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     return wrapped;
-  }, [botPatchQueue]);
+  }, [botPatchQueue, teamActivationQueue]);
 
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
