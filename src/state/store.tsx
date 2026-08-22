@@ -21,7 +21,7 @@ import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib
 import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
-import { firstVisibleSelection } from "@/lib/team-scope";
+import { firstVisibleSelection, isCurrentTeamActivation } from "@/lib/team-scope";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
 export type { MausColor } from "@/lib/mascot";
@@ -1406,10 +1406,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({ id: action.teamId }),
           })
-            .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) =>
-              rawDispatch({ type: "teamsHydrated", teams, activeTeamId }),
-            )
+            .then(({ teams, activeTeamId }: { teams: Team[]; activeTeamId: string | null }) => {
+              if (!isCurrentTeamActivation(stateRef.current.activeTeamId, action.teamId)) return;
+              rawDispatch({ type: "teamsHydrated", teams, activeTeamId });
+            })
             .catch((error: unknown) => {
+              if (!isCurrentTeamActivation(stateRef.current.activeTeamId, action.teamId)) return;
               showError(error);
               rawDispatch({
                 type: "teamsHydrated",

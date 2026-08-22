@@ -501,6 +501,14 @@ describe("harness HTTP API", () => {
       "Ops",
     );
 
+    const mixed = await api("PATCH", `/api/bots/${inTeam.id}`, { teamId, section: "Stale Label" });
+    expect(mixed.status).toBe(200);
+    expect(mixed.body.bot).toMatchObject({ teamId, section: "Ops" });
+    const clearedTeam = await api("PATCH", `/api/bots/${outsider.id}`, { teamId: null, section: "Should Not Stick" });
+    expect(clearedTeam.status).toBe(200);
+    expect(clearedTeam.body.bot.teamId).toBeNull();
+    expect(clearedTeam.body.bot).not.toHaveProperty("section");
+
     const all = await api("POST", "/api/teams/active", { id: null });
     expect(all.status).toBe(200);
     expect(all.body.activeTeamId).toBeNull();

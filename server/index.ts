@@ -3196,7 +3196,9 @@ const server = createServer(async (req, res) => {
         });
       } catch (error) {
         // A room of deleted members must not survive either — patchGroup can
-        // throw (disk) after createGroup already saved.
+        // throw (disk) after createGroup already saved. Restore archived
+        // bots first so a failed replace does not leave the previous team hidden.
+        store.restoreArchivedBots(archived);
         if (group) store.deleteGroup(group.id);
         for (const bot of importedBots) store.deleteBot(bot.id);
         if (createdTeamId) store.deleteTeam(createdTeamId);
@@ -3468,14 +3470,14 @@ const server = createServer(async (req, res) => {
       if (body.teamId !== undefined) {
         if (body.teamId === null || body.teamId === "") {
           patch.teamId = undefined;
-          if (section === undefined) patch.section = undefined;
+          patch.section = undefined;
         } else if (typeof body.teamId !== "string") {
           return json(res, 400, { error: "teamId must be a string" });
         } else {
           const team = store.team(body.teamId);
           if (!team) return json(res, 400, { error: "no such team" });
           patch.teamId = team.id;
-          if (section === undefined) patch.section = team.name;
+          patch.section = team.name;
         }
       } else if (section !== undefined) {
         if (section === null) patch.teamId = undefined;

@@ -22,6 +22,14 @@ export function groupInActiveTeam(
   return members.length > 0 && members.every((bot) => bot.teamId === teamId);
 }
 
+/** A late or failed /api/teams/active response must not rewind a newer switch. */
+export function isCurrentTeamActivation(
+  currentActiveTeamId: string | null,
+  requestedTeamId: string | null,
+): boolean {
+  return currentActiveTeamId === requestedTeamId;
+}
+
 export function firstVisibleSelection(
   bots: Array<{ id: string; teamId?: string | null; hidden?: boolean; chiefOfStaff?: boolean }>,
   groups: Array<{ id: string; teamId?: string | null; memberIds: string[]; dm?: boolean }>,

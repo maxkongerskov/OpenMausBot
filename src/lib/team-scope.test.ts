@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { botInActiveTeam, firstVisibleSelection, groupInActiveTeam, searchHitInActiveTeam } from "./team-scope";
+import {
+  botInActiveTeam,
+  firstVisibleSelection,
+  groupInActiveTeam,
+  isCurrentTeamActivation,
+  searchHitInActiveTeam,
+} from "./team-scope";
 
 const bots = [
   { id: "atlas", teamId: "eng", chiefOfStaff: true },
@@ -45,6 +51,13 @@ describe("team scope", () => {
     expect(firstVisibleSelection(bots, groups, "eng", "scout")).toBe("scout");
     expect(firstVisibleSelection(bots, groups, "eng", "copy")).toBe("atlas");
     expect(firstVisibleSelection(bots, groups, "mkt", "scout")).toBe("campaign");
+  });
+
+  it("a failed earlier team switch does not rewind a later one", () => {
+    expect(isCurrentTeamActivation("mkt", "eng")).toBe(false);
+    expect(isCurrentTeamActivation("eng", "eng")).toBe(true);
+    expect(isCurrentTeamActivation(null, null)).toBe(true);
+    expect(isCurrentTeamActivation("eng", null)).toBe(false);
   });
 
   it("drops search hits from other teams", () => {

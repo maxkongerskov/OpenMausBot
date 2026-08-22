@@ -1057,6 +1057,13 @@ export class Store {
     return bot;
   }
 
+  /** Undo a replace-import archive: bots become visible with their prior Chief flag. */
+  restoreArchivedBots(archived: Array<{ id: string; chiefOfStaff: boolean }>): void {
+    for (const item of archived) {
+      this.patchBot(item.id, { hidden: false, chiefOfStaff: item.chiefOfStaff });
+    }
+  }
+
   /** The one way runtime state changes. Sets `activity` and derives `busy`
    * from it, so a reader that only knows busy sees the same truth. */
   setActivity(botId: string, activity: BotActivity): BotRecord | null {

@@ -753,6 +753,24 @@ describe("Store teams", () => {
     expect(reloaded.bot(bot.id)?.name).toBe("Scout");
   });
 
+  it("restoreArchivedBots unhides the previous team and puts the Chief flag back", () => {
+    const store = new Store(selection);
+    const chief = store.createBot({ name: "Chief" });
+    store.setChiefOfStaff(chief.id);
+    const other = store.createBot({ name: "Other" });
+    const archived = [chief, other].map((bot) => ({
+      id: bot.id,
+      chiefOfStaff: Boolean(store.bot(bot.id)?.chiefOfStaff),
+    }));
+    store.patchBot(chief.id, { hidden: true, chiefOfStaff: false });
+    store.patchBot(other.id, { hidden: true, chiefOfStaff: false });
+
+    store.restoreArchivedBots(archived);
+
+    expect(store.bot(chief.id)).toMatchObject({ hidden: false, chiefOfStaff: true });
+    expect(store.bot(other.id)).toMatchObject({ hidden: false, chiefOfStaff: false });
+  });
+
   it("createTeamNamed numbers colliding import names", () => {
     const store = new Store(selection);
     store.createTeam("Field Team");
