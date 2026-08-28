@@ -927,13 +927,14 @@ export function GroupView({ group }: { group: Group }) {
   useEffect(() => setFolderOpen(false), [group.id]);
   useEffect(() => setMembersOpen(false), [group.id]);
   // deps track the FULL messages.length, so expanding the window (which only
-  // changes windowedMessages) can never re-trigger this bottom scrollTo
+  // changes windowedMessages) can never re-trigger this bottom scrollTo.
+  // `follow` is intentionally omitted — see ChatView.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, group.messages.length, streaming, group.busyBotId, follow, composerDock.pad]);
+  }, [group.id, group.messages.length, streaming, group.busyBotId, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
