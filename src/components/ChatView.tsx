@@ -24,7 +24,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
+import { folderChipLabel } from "@/lib/folder-chip";
 import {
   useStore,
   useStreaming,
@@ -1086,7 +1086,6 @@ export function ChatView({ bot }: { bot: Bot }) {
             </button>
           )}
           <TaskPicker bot={bot} />
-          <UsageChip bot={bot} />
           <WorkingFolderChip bot={bot} />
           <ModelPicker bot={bot} />
           <CallButton bot={bot} />
@@ -1277,48 +1276,14 @@ export function ChatView({ bot }: { bot: Bot }) {
   );
 }
 
-/** What the open task has spent — quiet until the first turn settles.
- * Click opens the bot's settings, where the Usage card has the breakdown. */
-function UsageChip({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
-  const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const text = usage ? usageChip(usage) : "";
-  if (!usage || !text) return null;
-  const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
-  const detail = [
-    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
-    usageDetail(usage),
-    // the whole thread rides along on every turn, so most of "in" is the
-    // model re-reading what it already saw — say so, or the figure reads as
-    // a bug (issue #527)
-    cachedInput(usage) > 0 ? "cached = context re-read each turn, not new text" : null,
-    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  // folded: one figure — cost when the engine reports one, else tokens
-  const short = usage.costUsd !== null ? formatUsd(usage.costUsd) : formatTokens(usage.input + usage.output);
-  return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
-      title={detail}
-    >
-      <span className="@max-4xl/chathead:hidden">{text}</span>
-      <span className="hidden @max-4xl/chathead:inline">{short}</span>
-    </button>
-  );
-}
-
-/** The folder this task's tools run in — quiet unless it's somewhere other
- * than home. Shows the pinned task folder when there is one, else the bot's
- * folder a first turn would pin. Click opens bot settings to change it. */
+/** The folder this task's tools run in — quiet unless it's a real project
+ * the user would recognise. Workspace UUID dirs stay off the header. */
 function WorkingFolderChip({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
   const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
-  if (!folder) return null;
-  const name = folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder;
+  const name = folderChipLabel(folder);
+  if (!name) return null;
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true })}
