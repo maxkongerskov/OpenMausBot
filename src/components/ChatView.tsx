@@ -952,13 +952,16 @@ export function ChatView({ bot }: { bot: Bot }) {
   useFocusMessage(bot.threadId, messages.length > 0);
 
   // deps track the FULL messages.length, so expanding the window (which only
-  // changes windowedMessages) can never re-trigger this bottom scrollTo
+  // changes windowedMessages) can never re-trigger this bottom scrollTo.
+  // `follow` is intentionally omitted: flipping it true used to yank the
+  // viewport to the end. Re-pinning only arms future content; Jump to latest
+  // and this effect on new rows do the scrolling.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow, composerDock.pad]);
+  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
