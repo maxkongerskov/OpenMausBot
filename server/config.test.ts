@@ -123,10 +123,11 @@ describe("configuration boundaries", () => {
 });
 
 describe("default fleet", () => {
-  it("ships Qwen and Hermes as custom-only engines", () => {
+  it("ships Qwen, Hermes, and Unsloth as custom-only engines", () => {
     const map = instanceConfigs({});
     expect(map.qwen).toEqual({ driver: "qwenAgent", environment: {} });
     expect(map.hermes).toEqual({ driver: "hermesAgent", environment: {} });
+    expect(map.unsloth).toEqual({ driver: "unslothAgent", environment: {} });
   });
 
   it("ships Cursor as a default-fleet subscription engine", () => {
@@ -184,6 +185,7 @@ describe("default fleet", () => {
     expect(map.claude.driver).toBe("claudeAgent");
     expect(map.qwen?.driver).toBe("qwenAgent");
     expect(map.hermes?.driver).toBe("hermesAgent");
+    expect(map.unsloth?.driver).toBe("unslothAgent");
     expect(map.cursor?.driver).toBe("cursorAgent");
     expect(map.openaiCompat?.driver).toBe("openai-compat");
   });

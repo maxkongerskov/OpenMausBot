@@ -9,9 +9,10 @@ describe("splitEngineRail", () => {
       { access: "custom", instanceId: "hermes" },
       { instanceId: "grok" },
       { access: "custom", instanceId: "qwen" },
+      { access: "custom", instanceId: "unsloth" },
     ]);
     expect(subscription.map((row) => row.instanceId)).toEqual(["claude", "grok"]);
-    expect(custom.map((row) => row.instanceId)).toEqual(["hermes", "qwen"]);
+    expect(custom.map((row) => row.instanceId)).toEqual(["hermes", "qwen", "unsloth"]);
   });
 
   it("hides the second group when nothing is custom-only", () => {

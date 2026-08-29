@@ -14,6 +14,7 @@ import { HermesAgentDriver, ensureHermesInjectProvider, hermesAcpModelId } from 
 import { ensureKimiInjectAlias, KimiAgentDriver } from "./acp/kimi.ts";
 import { ensureOpenCodeInjectModel } from "./acp/opencode-go.ts";
 import { ensureQwenInjectModel, QwenAgentDriver } from "./acp/qwen.ts";
+import { UnslothStudioDriver } from "./unsloth.ts";
 import { ensurePiInjectModel, PiDriver } from "./pi.ts";
 import { recordEvents } from "../testing/events.ts";
 import {
@@ -571,10 +572,11 @@ describe("Pi writer × hosts", () => {
 });
 
 describe("Cloud vs Local catalog access", () => {
-  it("Qwen, Hermes, and pi advertise access=custom", () => {
+  it("Qwen, Hermes, pi, and Unsloth advertise access=custom", () => {
     expect(QwenAgentDriver.metadata.access).toBe("custom");
     expect(HermesAgentDriver.metadata.access).toBe("custom");
     expect(PiDriver.metadata.access).toBe("custom");
+    expect(UnslothStudioDriver.metadata.access).toBe("custom");
   });
 
   it("Kimi and Droid stay Cloud (subscription catalog + Custom)", () => {

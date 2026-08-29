@@ -109,6 +109,18 @@ export function QwenMark({ size = 16, className }: IconProps) {
   );
 }
 
+/** Unsloth Studio mark — a U in Unsloth orange. */
+export function UnslothMark({ size = 16, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden>
+      <path
+        fill="#FF6B35"
+        d="M6 4h4v12.5c0 2.3 1.5 3.5 4 3.5s4-1.2 4-3.5V4h4v12.7C22 20.4 18.6 23 14 23s-8-2.6-8-6.3V4z"
+      />
+    </svg>
+  );
+}
+
 /** Official pi (pi.dev) mark — geometric "Pi" wordmark from pi.dev/logo.svg. */
 export function PiMark({ size = 16, className }: IconProps) {
   return (
@@ -151,6 +163,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <ComputerMark size={size} className={className} />;
     case "piAgent":
       return <PiMark size={size} className={className} />;
+    case "unslothAgent":
+      return <UnslothMark size={size} className={className} />;
     default:
       return (
         <span className="flex size-full items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary">
