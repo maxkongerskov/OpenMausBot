@@ -259,7 +259,7 @@ function ConversationTaskPicker({
               />
             </div>
           </div>
-          <div className="max-h-[320px] overflow-y-auto" role="listbox" aria-label={looking ? `${visible.length} matching tasks` : "Tasks"}>
+          <div className="max-h-[320px] overflow-y-auto" role="group" aria-label={looking ? `${visible.length} matching tasks` : "Tasks"}>
             {visible.length === 0 ? (
               <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
                 Nothing matches “{looking}”
