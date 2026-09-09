@@ -98,7 +98,16 @@ export function modelFacingTurns(
   return { transcript, lastCompaction, compactionMessage };
 }
 
-/** Keep the newest turns that fit `maxTokens`, never splitting a turn. */
+/** Keep the newest turns that fit `maxTokens`. Walk newest → oldest.
+ * Whole turns that fit are kept. An oversized newest turn (kept empty) is
+ * retained whole. Later giants (text longer than ~2400 chars) may contribute
+ * a head snippet when that head fits the remaining budget; otherwise their
+ * body is skipped. Non-giant turns that do not fit are skipped. In both
+ * skip cases the walk continues so older short facts can still be harvested
+ * for compact. */
+const GIANT_TURN_CHARS = 2400;
+const GIANT_HEAD_CHARS = 1200;
+
 export function clipFromTail(turns: FacingTurn[], maxTokens: number): FacingTurn[] {
   if (maxTokens <= 0 || turns.length === 0) return [];
   const kept: FacingTurn[] = [];
@@ -106,9 +115,29 @@ export function clipFromTail(turns: FacingTurn[], maxTokens: number): FacingTurn
   for (let i = turns.length - 1; i >= 0; i--) {
     const turn = turns[i]!;
     const cost = estimateTokens(turn.text);
-    if (kept.length && used + cost > maxTokens) break;
-    kept.push(turn);
-    used += cost;
+    if (used + cost <= maxTokens) {
+      kept.push(turn);
+      used += cost;
+      continue;
+    }
+    // Does not fit in the remaining budget.
+    if (kept.length === 0) {
+      // Newest alone exceeds — keep whole (callers expect newest retained).
+      kept.push(turn);
+      used += cost;
+      continue;
+    }
+    if (turn.text.length > GIANT_TURN_CHARS) {
+      const headText = turn.text.slice(0, GIANT_HEAD_CHARS);
+      const headCost = estimateTokens(headText);
+      if (headCost > 0 && used + headCost <= maxTokens) {
+        kept.push({ ...turn, text: headText });
+        used += headCost;
+      }
+      // else skip body; keep walking older turns
+      continue;
+    }
+    // Non-giant that does not fit: skip and keep walking.
   }
   kept.reverse();
   return kept;
