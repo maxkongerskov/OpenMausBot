@@ -6,8 +6,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import {
+  COMPACT_AROUND_PRESETS,
+  isCompactAroundPreset,
+  isVectorBudgetPreset,
+  VECTOR_BUDGET_PRESETS,
+  VECTOR_PROMPT_MAX,
+} from "../shared/compact-around.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { EFFORT_LEVELS, type InstanceConfigMap, type ModelSelection } from "./contracts.ts";
+import { isUsableArchiveDir } from "./vector-archive.ts";
 import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 
@@ -53,6 +61,32 @@ const roomConfigSchema = z.object({
     .int()
     .min(MIN_ROOM_TURN_TIMEOUT_MINUTES)
     .max(MAX_ROOM_TURN_TIMEOUT_MINUTES),
+});
+const compactAroundSchema = z
+  .number()
+  .int()
+  .refine((value) => isCompactAroundPreset(value), {
+    message: `must be one of ${COMPACT_AROUND_PRESETS.join(", ")}`,
+  });
+const vectorBudgetSchema = z
+  .number()
+  .int()
+  .refine((value) => isVectorBudgetPreset(value), {
+    message: `must be one of ${VECTOR_BUDGET_PRESETS.join(", ")}`,
+  });
+const compactionConfigSchema = z.object({
+  compactAround: compactAroundSchema.nullable().optional(),
+  vectorBudget: vectorBudgetSchema.nullable().optional(),
+  prompt: z.string().max(VECTOR_PROMPT_MAX).nullable().optional(),
+  keepVectors: z.boolean().optional(),
+  vectorArchiveDir: z
+    .string()
+    .max(1024)
+    .nullable()
+    .optional()
+    .refine((value) => value == null || value.trim() === "" || isUsableArchiveDir(value), {
+      message: "must be an absolute folder outside system locations",
+    }),
 });
 const localVmConfigSchema = z.object({
   mode: z.enum(["shared", "per-bot"]).optional(),
@@ -270,6 +304,8 @@ const appConfigSchema = z.object({
    * system language. Unknown tags degrade to English in the renderer. */
   language: optionalText,
   rooms: roomConfigSchema.optional(),
+  threads: z.object({ maxConcurrentPerBot: z.number().int().min(1).max(MAX_CONCURRENT_BOT_THREADS) }).strict().optional(),
+  compaction: compactionConfigSchema.optional(),
   localVm: localVmConfigSchema.optional(),
   features: featureConfigSchema.optional(),
   browserProfiles: browserProfilesSchema.optional(),
@@ -308,6 +344,17 @@ export interface AppConfig {
   imageGen?: { key?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
+  threads?: { maxConcurrentPerBot: number };
+  /** Compact around ceiling, vector page size, rewrite prompt, and optional
+   * recap archive. `null`/absent compactAround = Auto. `null` prompt = house
+   * one-pager. `null` vectorArchiveDir = each bot's private state-vectors folder. */
+  compaction?: {
+    compactAround?: number | null;
+    vectorBudget?: number | null;
+    prompt?: string | null;
+    keepVectors?: boolean;
+    vectorArchiveDir?: string | null;
+  };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
@@ -430,6 +477,38 @@ export function roomTurnTimeoutMinutes(cfg: AppConfig): number {
   return cfg.rooms?.turnTimeoutMinutes ?? DEFAULT_ROOM_TURN_TIMEOUT_MINUTES;
 }
 
+export function maxConcurrentBotThreads(cfg: AppConfig): number {
+  return cfg.threads?.maxConcurrentPerBot ?? DEFAULT_MAX_CONCURRENT_BOT_THREADS;
+}
+
+/** Compact around preset, or null for Auto. */
+export function compactAroundTokens(cfg: AppConfig): number | null {
+  const value = cfg.compaction?.compactAround;
+  return typeof value === "number" && isCompactAroundPreset(value) ? value : null;
+}
+
+/** Vector page size preset, or null for Auto (15% of compact ceiling, cap 6k). */
+export function vectorBudgetTokens(cfg: AppConfig): number | null {
+  const value = cfg.compaction?.vectorBudget;
+  return typeof value === "number" && isVectorBudgetPreset(value) ? value : null;
+}
+
+/** Custom rewrite prompt, or null to use the house one-pager. */
+export function vectorPrompt(cfg: AppConfig): string | null {
+  const value = cfg.compaction?.prompt?.trim();
+  return value ? value : null;
+}
+
+export function keepVectorsEnabled(cfg: AppConfig): boolean {
+  return cfg.compaction?.keepVectors === true;
+}
+
+/** Custom archive folder, or null to use each bot's private state-vectors dir. */
+export function vectorArchiveDir(cfg: AppConfig): string | null {
+  const value = cfg.compaction?.vectorArchiveDir?.trim();
+  return value && isUsableArchiveDir(value) ? value : null;
+}
+
 export function localVmMode(cfg: AppConfig): "shared" | "per-bot" {
   return cfg.localVm?.mode ?? DEFAULT_LOCAL_VM_MODE;
 }
@@ -450,6 +529,31 @@ export function showToolCallsEnabled(cfg: AppConfig): boolean {
  * switch sits under it, so either can withhold the browser. */
 export function builtInBrowserEnabled(cfg: AppConfig): boolean {
   return cfg.features?.browser === true;
+}
+
+/** Config sections no provider driver reads. A write that touches only
+ * these must not rebuild the fleet: rebuilding disposes every engine child
+ * and reloads it, seconds of work that would also interrupt in-flight
+ * turns. The guided tour writes `onboarding` on every step, so it in
+ * particular has to stay cheap. */
+export const FLEET_NEUTRAL_KEYS: ReadonlySet<string> = new Set([
+  "profile",
+  "language",
+  "tts",
+  "imageGen",
+  "vps",
+  "rooms",
+  "threads",
+  "compaction",
+  "localVm",
+  "features",
+  "browserProfiles",
+  "onboarding",
+]);
+
+/** The keys of a config patch that require the provider fleet to reload. */
+export function providerReloadKeys(patch: object): string[] {
+  return Object.keys(patch).filter((key) => !FLEET_NEUTRAL_KEYS.has(key));
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
@@ -604,7 +708,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "anthropic", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "compaction", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
