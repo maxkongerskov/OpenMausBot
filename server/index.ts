@@ -3350,8 +3350,9 @@ bus.subscribe((event: RuntimeEvent) => {
         noteSpend(DATA_DIR, event.cost ?? null);
         if (typeof tokens?.input === "number") {
           // Local hosts report this turn's prompt_tokens (live fill). ACP
-          // agents sometimes report the whole session instead — ignore a
-          // jump past the recycle window after we already stored a smaller fill.
+          // agents sometimes report the whole session instead — a jump past
+          // the recycle window is cumulative noise. Clamp to the ceiling so
+          // Auto compact still sees a full window (don't leave SPT stuck mid-range).
           const inject = decodeInjectId(store.bot(bot.id)?.modelSelection?.model);
           const ceiling = compactAroundTokens(cfg) ?? AUTO_COMPACT_AROUND_TOKENS;
           const current = store.taskByThread(bot.id, event.threadId)?.sessionPromptTokens;
@@ -3360,7 +3361,8 @@ bus.subscribe((event: RuntimeEvent) => {
             typeof current === "number" &&
             tokens.input > ceiling * 1.25 &&
             tokens.input > current;
-          if (!inflated) store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
+          if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
+          else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
