@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 
 import {
   collectCompactSeedDirs,
-  clipCompactUserText,
   clipKeepingNext,
   compactSession,
   demotePadBlobsInVector,
