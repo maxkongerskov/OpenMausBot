@@ -57,6 +57,22 @@ describe("clipFromTail", () => {
     const clipped = clipFromTail(turns, estimateTokens(turns[2]!.text) + 1);
     expect(clipped).toEqual([turns[2]]);
   });
+
+  it("does not let a giant middle paste block an older short canary turn", () => {
+    const canary: FacingTurn = {
+      role: "assistant",
+      text: "Ack. CANARY_AUTO_102K_A7F1 vault=/tmp/omb-vault-auto-102k",
+    };
+    const giant: FacingTurn = { role: "user", text: "x".repeat(20_000) };
+    const newest: FacingTurn = { role: "assistant", text: "UNIQUE-G received." };
+    const budget =
+      estimateTokens(newest.text) + estimateTokens(canary.text) + estimateTokens("x".repeat(1200)) + 50;
+    const clipped = clipFromTail([canary, giant, newest], budget);
+    expect(clipped.some((t) => t.text.includes("CANARY_AUTO_102K_A7F1"))).toBe(true);
+    expect(clipped.some((t) => t.text.includes("/tmp/omb-vault-auto-102k"))).toBe(true);
+    expect(clipped.some((t) => t.text.includes("UNIQUE-G received."))).toBe(true);
+    expect(clipped.some((t) => t.text.length === 20_000)).toBe(false);
+  });
 });
 
 describe("shouldCompact", () => {

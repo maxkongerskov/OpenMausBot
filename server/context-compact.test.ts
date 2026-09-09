@@ -489,6 +489,38 @@ describe("live work pointers", () => {
     expect(result.summary).not.toContain("[tool");
   });
 
+  it("harvests an early canary past giant UNIQUE pastes that exceed the clip window", async () => {
+    const giant = "x".repeat(200_000);
+    const result = await compactSession({
+      transcript: [
+        {
+          role: "user",
+          text: "Remember canary CANARY_AUTO_102K_A7F1 and vault /tmp/omb-vault-auto-102k",
+        },
+        {
+          role: "assistant",
+          text: "Stored. CANARY_AUTO_102K_A7F1 lives at /tmp/omb-vault-auto-102k",
+        },
+        { role: "user", text: giant },
+        { role: "assistant", text: "paste 1 noted" },
+        { role: "user", text: giant },
+        { role: "assistant", text: "paste 2 noted" },
+        { role: "user", text: giant },
+        { role: "assistant", text: "UNIQUE-G received." },
+      ],
+      userText: "What was the canary and the vault path?",
+      maxTokens: 512,
+      workspaceSeed: "",
+      gitWorkingTree: null,
+    });
+    expect(result.summary).toContain("CANARY_AUTO_102K_A7F1");
+    expect(result.summary).toContain("/tmp/omb-vault-auto-102k");
+    expect(result.summary).not.toMatch(/No task goal/i);
+    // Must not collapse to only the newest short ack.
+    expect(result.summary.trim() === "UNIQUE-G received.").toBe(false);
+    expect(result.summary).not.toMatch(/^Goal\nUNIQUE-G received\.?$/m);
+  });
+
   it("glues file paths, last failure, and dirty git onto a generic recap", async () => {
     const dir = join(tmpdir(), `omb-git-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
