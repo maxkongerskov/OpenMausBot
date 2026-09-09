@@ -837,10 +837,13 @@ export function fillTokensFor(input: {
   transcript: FacingTurn[];
   userText: string;
 }): number {
+  // SPT is the last settled prompt fill. Add this turn's paste so a fat
+  // message can trip Auto compact on the same turn (every-message recycle).
+  const paste = estimateTokens(input.userText);
   if (typeof input.sessionPromptTokens === "number" && Number.isFinite(input.sessionPromptTokens) && input.sessionPromptTokens > 0) {
-    return Math.floor(input.sessionPromptTokens);
+    return Math.floor(input.sessionPromptTokens) + paste;
   }
-  return estimateTranscriptTokensFor(input.transcript) + estimateTokens(input.userText);
+  return estimateTranscriptTokensFor(input.transcript) + paste;
 }
 
 function estimateTranscriptTokensFor(turns: FacingTurn[]): number {

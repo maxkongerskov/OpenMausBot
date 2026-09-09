@@ -171,8 +171,9 @@ describe("compactSession", () => {
 });
 
 describe("fillTokensFor", () => {
-  it("prefers the last native-session prompt size over a heuristic", () => {
-    expect(fillTokensFor({ sessionPromptTokens: 12_345, transcript, userText: "x" })).toBe(12_345);
+  it("adds this turn's paste on top of the last native-session prompt size", () => {
+    expect(fillTokensFor({ sessionPromptTokens: 12_345, transcript, userText: "x" })).toBe(12_345 + 1);
+    expect(fillTokensFor({ sessionPromptTokens: 12_345, transcript, userText: "abcd" })).toBe(12_345 + 1);
     expect(fillTokensFor({ transcript, userText: "abcd" })).toBeGreaterThan(0);
   });
 });
