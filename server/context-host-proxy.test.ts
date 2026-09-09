@@ -89,6 +89,28 @@ describe("rewriteOpenAIMessages", () => {
     expect(userTurns.some((c) => c.length > 5_000)).toBe(false);
   });
 
+
+  it("leaves later giant pastes full so post-refresh fill can climb again", () => {
+    const compactTurn = `GO4 UNIQUE-GO4 ${"ab".repeat(8_000)} CANARY_LIVE072_C495 vault=/tmp/omb-vault-live-072`;
+    const laterPad = `UNIQUE-LATER ${"cd".repeat(8_000)} remember the canary`;
+    expect(laterPad.length).toBeGreaterThan(12_000);
+    const messages = [
+      { role: "system", content: "You are Wren." },
+      { role: "user", content: "old billing thread" },
+      { role: "user", content: compactTurn },
+      { role: "assistant", content: "ack" },
+      { role: "user", content: laterPad },
+    ];
+    const rewritten = rewriteOpenAIMessages(messages, "Goal\nkeep chatting", compactTurn);
+    const users = rewritten.filter((m) => m.role === "user").map((m) => String(m.content));
+    // state + clipped compact turn + full later pad
+    expect(users[0]).toContain("Current task state:");
+    expect(users[1]!.length).toBeLessThan(2_000);
+    expect(users[1]).toMatch(/bulk paste omitted|clipped for refreshed context/);
+    expect(users.at(-1)).toBe(laterPad);
+    expect(users.at(-1)!.length).toBeGreaterThan(12_000);
+  });
+
   it("keeps tool follow-ups after the current user turn", () => {
     const withTools = [
       ...history,
