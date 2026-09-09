@@ -97,18 +97,16 @@ export function rewriteOpenAIMessages(messages: ChatMessage[], vector: string, u
     const role = typeof message.role === "string" ? message.role : "";
     return role !== "system" && role !== "developer";
   });
-  // Compact-turn pastes stay full in OMB; the provider only gets a clipped needle
-  // so the refreshed window does not spike back over the ceiling mid-turn.
+  // Only the compact-turn needle is stubbed/clipped for the provider. Later
+  // fat pastes must stay full so fill/SPT can climb again and a second
+  // compact can fire — clipping every oversized suffix turn froze the chip
+  // ~post-refresh size and blocked multi-compact.
   const clippedSuffix = suffix.map((message) => {
     if (message.role !== "user") return message;
     const text = messageText(message);
     if (text.length <= COMPACT_USER_CLIP_CHARS) return message;
-    const providerText = clipCompactUserText(stubBulkPadText(text));
     if (needle && messageMatchesCompactNeedle(text, needle)) {
-      return { ...message, content: providerText };
-    }
-    if (!needle || start >= 0) {
-      return { ...message, content: providerText };
+      return { ...message, content: clipCompactUserText(stubBulkPadText(text)) };
     }
     return message;
   });
