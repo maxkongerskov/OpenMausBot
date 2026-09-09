@@ -118,8 +118,11 @@ export interface SecretRequestCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
+  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run" | "compaction";
   text?: string;
+  /** Model-facing compaction record. Display still has every message behind
+   * `firstKeptId`; only the rebuild reads `summary`. */
+  compaction?: { summary: string; firstKeptId: string; tokensBefore: number };
   /** Durable provider output stored by the harness. Paths always point into
    * OpenMausBot's private attachment directory; renderers receive only the
    * existing allowlisted /api/attachments URL. */
@@ -337,6 +340,9 @@ export interface TaskRecord {
    * a folder that moved under a live session would break resume. `null`
    * = pinned to the default (home); absent = not pinned yet. */
   cwd?: string | null;
+  /** Last native-session prompt size in tokens, overwritten each settled
+   * turn (not summed). Drives compaction. Absent on older records. */
+  sessionPromptTokens?: number;
 }
 
 const TASK_PATCH_FIELDS = [
@@ -623,6 +629,8 @@ export interface BotRecord {
   /** The coordinator for this bot's sidebar section. The store enforces
    * at most one Chief per section (including the unsectioned area). */
   chiefOfStaff?: boolean;
+  /** Optional override of the session-compaction extraction prompt. */
+  compactionPrompt?: string;
   /** Pause for human approval before this bot talks to a peer (ask_bot,
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
@@ -1391,7 +1399,9 @@ export class Store {
     const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
     const children = t.messages.filter((m) => m.parentId === anchorId);
     t.messages.push(full);
-    mdb.appendMessage(threadId, full);
+    // insertMessage does not move the branch head — appendMessage would
+    // steal the leaf on disk while in-memory still points at the follow-up.
+    mdb.insertMessage(threadId, full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1757,6 +1767,29 @@ export class Store {
     // The legacy mirror follows the task visible in chat, never a detached
     // routine task working in the background.
     if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
+    this.saveBots();
+    this.emit({ type: "bot", botId });
+  }
+
+  /** Drop one instance's native session on this task so the next turn
+   * starts session/new. Other instances' cursors stay put. */
+  clearResumeCursor(botId: string, instanceId: string, threadId?: string) {
+    const bot = this.bot(botId);
+    if (!bot) return;
+    const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
+    if (task) delete task.resumeCursors[instanceId];
+    if (!threadId || bot.threadId === threadId) delete bot.resumeCursors[instanceId];
+    this.saveBots();
+    this.emit({ type: "bot", botId });
+  }
+
+  /** Overwrite the live native-session prompt size. Not additive. */
+  setSessionPromptTokens(botId: string, threadId: string, tokens: number) {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return;
+    const clean = Number.isFinite(tokens) ? Math.max(0, Math.trunc(tokens)) : 0;
+    if (task.sessionPromptTokens === clean) return;
+    task.sessionPromptTokens = clean;
     this.saveBots();
     this.emit({ type: "bot", botId });
   }

@@ -111,6 +111,7 @@ function preview(bot: Bot): string {
   if (last.kind === "options" && last.card) return last.card.title;
   if (last.kind === "activity" && last.tool) return last.tool.name;
   if (last.kind === "screen") return t("sidebar.preview.screenFrame");
+  if (last.kind === "compaction") return "Context refreshed";
   return last.text ?? "";
 }
 
@@ -131,6 +132,8 @@ function groupPreview(group: Group, bots: Bot[]): string {
   if (!last) return t("sidebar.preview.noMessages");
   const text = last.kind === "activity" && last.tool
     ? last.tool.name
+    : last.kind === "compaction"
+      ? "Context refreshed"
     : last.kind === "goal.run" && last.goalRun
       ? sidebarGoalRunPreview(last.goalRun)
       : (last.text ?? "");

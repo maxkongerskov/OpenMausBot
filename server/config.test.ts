@@ -17,6 +17,11 @@ import { customMcpServers,
   parseConfigPatch,
   parseStoredConfig,
   persistableInstanceConfigs,
+  compactAroundTokens,
+  vectorBudgetTokens,
+  vectorPrompt,
+  keepVectorsEnabled,
+  vectorArchiveDir,
   roomTurnTimeoutMinutes,
   maxConcurrentBotThreads,
   showToolCallsEnabled,
@@ -347,6 +352,49 @@ describe("configuration boundaries", () => {
       );
     },
   );
+
+  it("accepts Compact around presets and treats null as Auto", () => {
+    expect(parseConfigPatch({ compaction: { compactAround: 128_000 } })).toEqual({
+      compaction: { compactAround: 128_000 },
+    });
+    expect(parseConfigPatch({ compaction: { compactAround: null } })).toEqual({
+      compaction: { compactAround: null },
+    });
+    expect(compactAroundTokens({ compaction: { compactAround: 64_000 } })).toBe(64_000);
+    expect(compactAroundTokens({ compaction: { compactAround: null } })).toBeNull();
+    expect(compactAroundTokens({})).toBeNull();
+    expect(vectorBudgetTokens({ compaction: { vectorBudget: 16_000 } })).toBe(16_000);
+    expect(vectorBudgetTokens({})).toBeNull();
+    expect(vectorPrompt({ compaction: { prompt: "  Goal first.  " } })).toBe("Goal first.");
+    expect(vectorPrompt({})).toBeNull();
+    expect(() => parseConfigPatch({ compaction: { compactAround: 130_000 } })).toThrow(
+      "compaction.compactAround",
+    );
+    expect(parseConfigPatch({ compaction: { vectorBudget: 16_000 } })).toEqual({
+      compaction: { vectorBudget: 16_000 },
+    });
+    expect(parseConfigPatch({ compaction: { vectorBudget: 160_000 } })).toEqual({
+      compaction: { vectorBudget: 160_000 },
+    });
+    expect(parseConfigPatch({ compaction: { prompt: "Goal first." } })).toEqual({
+      compaction: { prompt: "Goal first." },
+    });
+    expect(() => parseConfigPatch({ compaction: { vectorBudget: 3_000 } })).toThrow(
+      "compaction.vectorBudget",
+    );
+    expect(parseConfigPatch({ compaction: { keepVectors: true } })).toEqual({
+      compaction: { keepVectors: true },
+    });
+    expect(keepVectorsEnabled({})).toBe(false);
+    expect(keepVectorsEnabled({ compaction: { keepVectors: true } })).toBe(true);
+    expect(vectorArchiveDir({})).toBeNull();
+    expect(() => parseConfigPatch({ compaction: { vectorArchiveDir: "/Applications" } })).toThrow(
+      "compaction.vectorArchiveDir",
+    );
+    expect(() => parseConfigPatch({ compaction: { vectorArchiveDir: "relative" } })).toThrow(
+      "compaction.vectorArchiveDir",
+    );
+  });
 
   it("preserves shared Local VM behavior by default and accepts bounded per-bot mode", () => {
     expect(localVmMode({})).toBe("shared");

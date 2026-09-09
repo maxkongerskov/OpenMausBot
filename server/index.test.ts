@@ -5450,6 +5450,61 @@ describe("harness HTTP API", () => {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);
     }
+  it("validates and persists Compact around without reloading providers", async () => {
+    const before = await api("GET", "/api/config");
+    expect(before.status).toBe(200);
+    expect(before.body.compaction).toEqual({
+      compactAround: null,
+      vectorBudget: null,
+      prompt: null,
+      keepVectors: false,
+      vectorArchiveDir: null,
+      envOverride: null,
+    });
+
+    const invalid = await api("PUT", "/api/config", { compaction: { compactAround: 130_000 } });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toContain("compaction.compactAround");
+
+    const saved = await api("PUT", "/api/config", { compaction: { compactAround: 128_000 } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.compaction).toEqual({
+      compactAround: 128_000,
+      vectorBudget: null,
+      prompt: null,
+      keepVectors: false,
+      vectorArchiveDir: null,
+      envOverride: null,
+    });
+
+    const after = await api("GET", "/api/config");
+    expect(after.body.compaction).toEqual({
+      compactAround: 128_000,
+      vectorBudget: null,
+      prompt: null,
+      keepVectors: false,
+      vectorArchiveDir: null,
+      envOverride: null,
+    });
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.compaction).toEqual({ compactAround: 128_000 });
+
+    const auto = await api("PUT", "/api/config", { compaction: { compactAround: null } });
+    expect(auto.status).toBe(200);
+    expect(auto.body.compaction).toEqual({
+      compactAround: null,
+      vectorBudget: null,
+      prompt: null,
+      keepVectors: false,
+      vectorArchiveDir: null,
+      envOverride: null,
+    });
+
+    const keep = await api("PUT", "/api/config", { compaction: { keepVectors: true } });
+    expect(keep.status).toBe(200);
+    expect(keep.body.compaction.keepVectors).toBe(true);
+    expect(keep.body.compaction.compactAround).toBeNull();
   });
 
   it("mounts the verification skill into a real turn when its trigger appears", async () => {
