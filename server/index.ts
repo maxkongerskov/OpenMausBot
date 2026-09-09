@@ -229,7 +229,14 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { decodeInjectId } from "./drivers/local-inject.ts";
 import { AUTO_COMPACT_AROUND_TOKENS } from "../shared/compact-around.ts";
 import { advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
-import { collectCompactSeedDirs, compactSession, existingDirectory, fillTokensFor, resolveOutgoingTurn } from "./context-compact.ts";
+import {
+  clipCompactUserText,
+  collectCompactSeedDirs,
+  compactSession,
+  existingDirectory,
+  fillTokensFor,
+  resolveOutgoingTurn,
+} from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, vectorBudget } from "./context-rebuild.ts";
@@ -5179,7 +5186,7 @@ async function startTurn(
             tokensBefore: fill,
           },
         });
-        store.setSessionPromptTokens(bot.id, threadId, estimateTokens(result.summary) + estimateTokens(userPrompt));
+        store.setSessionPromptTokens(bot.id, threadId, estimateTokens(result.summary) + estimateTokens(clipCompactUserText(userPrompt)));
         if (keepVectorsEnabled(cfg)) {
           archiveStateVector({
             summary: result.summary,

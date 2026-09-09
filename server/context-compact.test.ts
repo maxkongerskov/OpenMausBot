@@ -7,14 +7,17 @@ import { join, resolve } from "node:path";
 
 import {
   collectCompactSeedDirs,
+  clipCompactUserText,
   clipKeepingNext,
   compactSession,
+  demotePadBlobsInVector,
   extractNextBlock,
   fillTokensFor,
   harvestAddresses,
   harvestWorkPointers,
   HANDOFF_AS_VECTOR_MIN_CHARS,
   injectStateVector,
+  isBulkPadText,
   mergeLiveUser,
   instructionSeedDirs,
   isBoilerplateMemory,
@@ -25,6 +28,7 @@ import {
   readGitWorkingTree,
   readWorkspaceSeed,
   resolveOutgoingTurn,
+  stubBulkPadText,
   stripSecretLines,
 } from "./context-compact.ts";
 import type { FacingTurn } from "./context-rebuild.ts";
@@ -45,6 +49,56 @@ describe("injectStateVector", () => {
     expect(text.toLowerCase()).not.toMatch(/restart|joining this conversation|rewound|session\/new|compacted/);
   });
 });
+
+
+describe("bulk pad demotion", () => {
+  const pad = `Remember CANARY_PAD_9F1A at /tmp/omb-vault-pad. UNIQUE-GO4 ${"deadbeef".repeat(400)}`;
+
+  it("detects UNIQUE hex pastes and stubs them while keeping canaries/paths", () => {
+    expect(isBulkPadText(pad)).toBe(true);
+    const stub = stubBulkPadText(pad);
+    expect(stub.length).toBeLessThan(600);
+    expect(stub).toContain("CANARY_PAD_9F1A");
+    expect(stub).toContain("/tmp/omb-vault-pad");
+    expect(stub).toContain("bulk paste omitted");
+    expect(stub).not.toContain("deadbeef".repeat(20));
+  });
+
+  it("demotes pad lines out of Goal/Next in the vector", () => {
+    const vector = [
+      "Goal",
+      pad,
+      "",
+      "Verified facts",
+      pad,
+      "",
+      "Next action",
+      "ask for the canary",
+    ].join("\n");
+    const cleaned = demotePadBlobsInVector(vector);
+    expect(cleaned).toContain("Next action");
+    expect(cleaned).toContain("ask for the canary");
+    expect(cleaned).not.toContain("deadbeef".repeat(20));
+    expect(cleaned.toLowerCase()).toMatch(/bulk paste omitted/);
+  });
+
+  it("clips giant live user text in injectStateVector", () => {
+    const text = injectStateVector("Goal\nkeep chatting\nNext action\ncontinue", pad);
+    expect(text).toContain("Current task state:");
+    expect(text).toContain("CANARY_PAD_9F1A");
+    expect(text.length).toBeLessThan(2_500);
+    expect(text).not.toContain("deadbeef".repeat(20));
+  });
+
+  it("mergeLiveUser stubs pads instead of pasting hex into Live user", () => {
+    const summary = "Goal\nship\n\nNext action\ncontinue";
+    const merged = mergeLiveUser(summary, pad);
+    expect(merged).toContain("Live user");
+    expect(merged).toContain("CANARY_PAD_9F1A");
+    expect(merged).not.toContain("deadbeef".repeat(20));
+  });
+});
+
 
 describe("resolveOutgoingTurn", () => {
   it("drops the native cursor and the old transcript when compacted", () => {

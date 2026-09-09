@@ -67,6 +67,28 @@ describe("rewriteOpenAIMessages", () => {
     expect(contents.at(-1)).toBe("What is the canary code and the vault path?");
   });
 
+
+  it("clips giant compact-turn paste for the provider while still matching the needle", () => {
+    const pad = `GO4 UNIQUE-GO4 ${"ab".repeat(8_000)} CANARY_LIVE072_C495 vault=/tmp/omb-vault-live-072`;
+    expect(pad.length).toBeGreaterThan(12_000);
+    const messages = [
+      { role: "system", content: "You are Wren." },
+      { role: "user", content: "old billing thread" },
+      { role: "assistant", content: "noted" },
+      { role: "user", content: pad },
+    ];
+    const rewritten = rewriteOpenAIMessages(messages, "Goal\nkeep chatting", pad);
+    const userTurns = rewritten.filter((m) => m.role === "user").map((m) => String(m.content));
+    expect(userTurns[0]).toContain("Current task state:");
+    expect(userTurns[1]!.length).toBeLessThan(2_000);
+    expect(userTurns[1]).toMatch(/bulk paste omitted|clipped for refreshed context|GO4 UNIQUE-GO4/);
+    expect(userTurns[1]).toContain("CANARY_LIVE072_C495");
+    expect(userTurns[1]).toContain("/tmp/omb-vault-live-072");
+    expect(userTurns.some((c) => c.includes("old billing"))).toBe(false);
+    // full paste must not appear in provider messages
+    expect(userTurns.some((c) => c.length > 5_000)).toBe(false);
+  });
+
   it("keeps tool follow-ups after the current user turn", () => {
     const withTools = [
       ...history,
