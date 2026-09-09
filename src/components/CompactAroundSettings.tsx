@@ -20,6 +20,7 @@ export function CompactAroundSettings() {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const home = capabilities.host.homeDir;
+  const enabled = state.config?.compaction?.enabled !== false;
   const compactAround = state.config?.compaction?.compactAround ?? null;
   const vectorBudget = state.config?.compaction?.vectorBudget ?? null;
   const savedPrompt = state.config?.compaction?.prompt ?? null;
@@ -52,9 +53,11 @@ export function CompactAroundSettings() {
   };
 
   const fireOf = (ceiling: number) => formatTokenK(compactFireTokens(ceiling));
-  const aroundAuto = compactAround === null;
+  const aroundOff = !enabled;
+  const aroundAuto = enabled && compactAround === null;
   const vectorAuto = vectorBudget === null;
   const ceilingCap = compactAround ?? AUTO_COMPACT_AROUND_TOKENS;
+  const detailsDisabled = aroundOff || saving !== null;
   const promptIsStandard = (savedPrompt ?? DEFAULT_EXTRACTION_PROMPT) === DEFAULT_EXTRACTION_PROMPT;
   const promptDirty = promptDraft !== (savedPrompt ?? DEFAULT_EXTRACTION_PROMPT);
   const canPick = Boolean(window.ogb?.pickFolder);
@@ -74,7 +77,8 @@ export function CompactAroundSettings() {
         </p>
         <p className="mt-2">
           Match the size to your computer: a smaller number refreshes more often and stays lighter on memory.
-          A larger number waits longer. Auto is a good default. Cloud chats are unchanged.
+          A larger number waits longer. Auto is a good default. Off turns this off completely and leaves
+          local chats as they were before Keep chatting. Cloud chats are unchanged.
         </p>
       </div>
 
@@ -89,11 +93,25 @@ export function CompactAroundSettings() {
           <button
             type="button"
             role="radio"
-            aria-checked={aroundAuto}
+            aria-checked={aroundOff}
             disabled={envOverride !== null || saving !== null}
-            onClick={() => void patch({ compactAround: null })}
+            onClick={() => void patch({ enabled: false })}
             className={cn(
               "flex-1 px-3 py-1.5 text-[13px]",
+              aroundOff ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            Off
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={aroundAuto}
+            disabled={envOverride !== null || saving !== null}
+            onClick={() => void patch({ enabled: true, compactAround: null })}
+            className={cn(
+              "flex-1 border-l border-hairline/40 px-3 py-1.5 text-[13px]",
               aroundAuto ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
@@ -105,12 +123,12 @@ export function CompactAroundSettings() {
               key={preset}
               type="button"
               role="radio"
-              aria-checked={compactAround === preset}
+              aria-checked={enabled && compactAround === preset}
               disabled={envOverride !== null || saving !== null}
-              onClick={() => void patch({ compactAround: preset })}
+              onClick={() => void patch({ enabled: true, compactAround: preset })}
               className={cn(
                 "flex-1 border-l border-hairline/40 px-3 py-1.5 text-[13px] tabular-nums",
-                compactAround === preset ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
+                enabled && compactAround === preset ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
             >
@@ -121,13 +139,15 @@ export function CompactAroundSettings() {
         <p className="text-[12px] leading-relaxed text-ink-secondary">
           {envOverride !== null
             ? `A computer setting is overriding this (${formatTokenK(envOverride)}).`
-            : aroundAuto
-              ? "Auto refreshes at a comfortable size for most computers."
-              : `Refreshes around ${fireOf(compactAround)}. This chat stays; a line appears in the thread.`}
+            : aroundOff
+              ? "Keep chatting is off. Local chats will not recycle with a state vector."
+              : aroundAuto
+                ? "Auto refreshes at a comfortable size for most computers."
+                : `Refreshes around ${fireOf(compactAround!)}. This chat stays; a line appears in the thread.`}
         </p>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className={cn("flex flex-col gap-2", aroundOff && "opacity-50")}>
         <div className="text-[13px] font-medium text-ink">How much to remember</div>
         <div
           role="radiogroup"
@@ -138,7 +158,7 @@ export function CompactAroundSettings() {
             type="button"
             role="radio"
             aria-checked={vectorAuto}
-            disabled={saving !== null}
+            disabled={detailsDisabled}
             onClick={() => void patch({ vectorBudget: null })}
             className={cn(
               "px-3 py-1.5 text-[13px]",
@@ -156,7 +176,7 @@ export function CompactAroundSettings() {
                 type="button"
                 role="radio"
                 aria-checked={vectorBudget === preset}
-                disabled={saving !== null || over}
+                disabled={detailsDisabled || over}
                 title={over ? `Limited to the refresh size (${formatTokenK(ceilingCap)})` : undefined}
                 onClick={() => void patch({ vectorBudget: preset })}
                 className={cn(
@@ -176,14 +196,14 @@ export function CompactAroundSettings() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className={cn("flex flex-col gap-2", aroundOff && "opacity-50")}>
         <div className="flex items-center justify-between gap-3">
           <label htmlFor="vector-prompt" className="text-[13px] font-medium text-ink">
             Recap notes
           </label>
           <button
             type="button"
-            disabled={saving !== null || promptIsStandard}
+            disabled={detailsDisabled || promptIsStandard}
             onClick={() => {
               setPromptDraft(DEFAULT_EXTRACTION_PROMPT);
               void patch({ prompt: null });
@@ -199,7 +219,7 @@ export function CompactAroundSettings() {
           maxLength={VECTOR_PROMPT_MAX}
           aria-label="Recap notes"
           value={promptDraft}
-          disabled={saving !== null}
+          disabled={detailsDisabled}
           onChange={(e) => setPromptDraft(e.target.value)}
           onBlur={() => {
             if (!promptDirty) return;
@@ -215,7 +235,7 @@ export function CompactAroundSettings() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className={cn("flex flex-col gap-2", aroundOff && "opacity-50")}>
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-[13px] font-medium text-ink">Save each recap as a file</div>
@@ -225,7 +245,7 @@ export function CompactAroundSettings() {
           </div>
           <Switch
             checked={keepVectors}
-            disabled={saving !== null}
+            disabled={detailsDisabled}
             aria-label="Save each recap as a file"
             onClick={() => void patch({ keepVectors: !keepVectors })}
           />
@@ -246,7 +266,7 @@ export function CompactAroundSettings() {
               <button
                 type="button"
                 onClick={() => void pickArchive()}
-                disabled={saving !== null}
+                disabled={detailsDisabled}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
               >
                 <FolderOpen size={14} />
@@ -257,7 +277,7 @@ export function CompactAroundSettings() {
               <button
                 type="button"
                 onClick={() => void patch({ vectorArchiveDir: null })}
-                disabled={saving !== null}
+                disabled={detailsDisabled}
                 className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50"
               >
                 Reset

@@ -5454,6 +5454,7 @@ describe("harness HTTP API", () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);
     expect(before.body.compaction).toEqual({
+      enabled: true,
       compactAround: null,
       vectorBudget: null,
       prompt: null,
@@ -5469,6 +5470,7 @@ describe("harness HTTP API", () => {
     const saved = await api("PUT", "/api/config", { compaction: { compactAround: 128_000 } });
     expect(saved.status).toBe(200);
     expect(saved.body.compaction).toEqual({
+      enabled: true,
       compactAround: 128_000,
       vectorBudget: null,
       prompt: null,
@@ -5479,6 +5481,7 @@ describe("harness HTTP API", () => {
 
     const after = await api("GET", "/api/config");
     expect(after.body.compaction).toEqual({
+      enabled: true,
       compactAround: 128_000,
       vectorBudget: null,
       prompt: null,
@@ -5493,6 +5496,7 @@ describe("harness HTTP API", () => {
     const auto = await api("PUT", "/api/config", { compaction: { compactAround: null } });
     expect(auto.status).toBe(200);
     expect(auto.body.compaction).toEqual({
+      enabled: true,
       compactAround: null,
       vectorBudget: null,
       prompt: null,
@@ -5500,6 +5504,24 @@ describe("harness HTTP API", () => {
       vectorArchiveDir: null,
       envOverride: null,
     });
+
+    const off = await api("PUT", "/api/config", { compaction: { enabled: false } });
+    expect(off.status).toBe(200);
+    expect(off.body.compaction).toEqual({
+      enabled: false,
+      compactAround: null,
+      vectorBudget: null,
+      prompt: null,
+      keepVectors: false,
+      vectorArchiveDir: null,
+      envOverride: null,
+    });
+    const diskOff = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(diskOff.compaction.enabled).toBe(false);
+
+    const onAgain = await api("PUT", "/api/config", { compaction: { enabled: true, compactAround: null } });
+    expect(onAgain.status).toBe(200);
+    expect(onAgain.body.compaction.enabled).toBe(true);
 
     const keep = await api("PUT", "/api/config", { compaction: { keepVectors: true } });
     expect(keep.status).toBe(200);

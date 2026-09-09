@@ -18,6 +18,7 @@ import { customMcpServers,
   parseStoredConfig,
   persistableInstanceConfigs,
   compactAroundTokens,
+  compactionEnabled,
   vectorBudgetTokens,
   vectorPrompt,
   keepVectorsEnabled,
@@ -363,6 +364,13 @@ describe("configuration boundaries", () => {
     expect(compactAroundTokens({ compaction: { compactAround: 64_000 } })).toBe(64_000);
     expect(compactAroundTokens({ compaction: { compactAround: null } })).toBeNull();
     expect(compactAroundTokens({})).toBeNull();
+    expect(compactionEnabled({})).toBe(true);
+    expect(compactionEnabled({ compaction: {} })).toBe(true);
+    expect(compactionEnabled({ compaction: { enabled: true } })).toBe(true);
+    expect(compactionEnabled({ compaction: { enabled: false } })).toBe(false);
+    expect(parseConfigPatch({ compaction: { enabled: false } })).toEqual({
+      compaction: { enabled: false },
+    });
     expect(vectorBudgetTokens({ compaction: { vectorBudget: 16_000 } })).toBe(16_000);
     expect(vectorBudgetTokens({})).toBeNull();
     expect(vectorPrompt({ compaction: { prompt: "  Goal first.  " } })).toBe("Goal first.");

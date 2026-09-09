@@ -1435,6 +1435,7 @@ function UsageChip({ bot }: { bot: Bot }) {
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
   const usage = task?.usage;
   const local = isLocalInjectModelId(bot.modelSelection.model);
+  const keepChattingOn = state.config?.compaction?.enabled !== false;
   const ceiling =
     state.config?.compaction?.envOverride ??
     state.config?.compaction?.compactAround ??
@@ -1447,7 +1448,9 @@ function UsageChip({ bot }: { bot: Bot }) {
   const detail = local
     ? [
         `This chat is ${formatTokens(fill ?? 0)} of ${formatTokens(ceiling)} on the local model.`,
-        "Refreshes near 80%. Lifetime spend is in Settings → Usage.",
+        keepChattingOn
+          ? "Refreshes near 80%. Lifetime spend is in Settings → Usage."
+          : "Keep chatting is off — this chat will not recycle with a state vector. Lifetime spend is in Settings → Usage.",
       ].join("\n")
     : !usage
       ? ""
