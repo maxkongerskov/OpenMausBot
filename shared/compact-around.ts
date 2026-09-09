@@ -66,7 +66,7 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "Landmines: what would destroy work if forgotten. " +
   "Constraints: never-do rules. " +
   "Next action: exactly one concrete step, complete, last section, never truncated. " +
-  "Drop long recipes, logs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). " +
+  "Drop long recipes, logs, UNIQUE/pad blobs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). Keep short canaries, paths, and ids — never paste bulk hex. " +
   "Prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +
   "The latest user message is live truth — quote it; do not replace it with an older Goal from seed. " +
   "This page must work for any local task (code, research, ops), not one domain. " +

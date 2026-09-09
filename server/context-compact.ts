@@ -18,9 +18,76 @@ export { DEFAULT_EXTRACTION_PROMPT };
 
 const RESTART_LANGUAGE = /\b(restart(ed|ing)?|compacted|compaction|session\/new|you are joining|rewound this conversation|brand new session|you (never )?restarted)\b/i;
 
+
+/** Soft cap for the live user turn after a refresh. Full text stays in the
+ * OpenMausBot transcript; the provider only needs a short needle. */
+export const COMPACT_USER_CLIP_CHARS = 1_200;
+
+export function clipCompactUserText(text: string, maxChars = COMPACT_USER_CLIP_CHARS): string {
+  const live = text.trim();
+  if (!live) return "";
+  if (live.length <= maxChars) return live;
+  return (
+    `${live.slice(0, maxChars).trimEnd()}\n` +
+    "…[clipped for refreshed context; full text remains in the OpenMausBot transcript]"
+  );
+}
+
+/** Giant UNIQUE/hex paste used to inflate Goal/Next — keep canaries + paths. */
+export function isBulkPadText(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 800) return false;
+  if (/\bUNIQUE[-_][A-Za-z0-9_-]{6,}/i.test(t) && t.length > 2_000) return true;
+  const hexRuns = t.match(/[0-9a-f]{32,}/gi) ?? [];
+  const hexChars = hexRuns.join("").length;
+  if (hexChars > t.length * 0.35 && t.length > 1_500) return true;
+  const spaces = (t.match(/\s/g) ?? []).length;
+  if (t.length > 4_000 && spaces / t.length < 0.02) return true;
+  return false;
+}
+
+export function stubBulkPadText(text: string): string {
+  const t = text.trim();
+  if (!isBulkPadText(t)) return t;
+  const head = t.slice(0, 180).replace(/\s+/g, " ").trim();
+  const canaries = [...t.matchAll(/\b(CANARY[_-][A-Za-z0-9_-]+)\b/g)].map((m) => m[1]!);
+  const paths = [...t.matchAll(/\/(?:tmp|Users|var|home|opt)[^\s]{2,120}/g)].map((m) => m[0]).slice(0, 4);
+  const bits = [
+    `[bulk paste omitted — ${t.length} chars]`,
+    head ? `head: ${head}…` : "",
+    canaries.length ? `canaries: ${[...new Set(canaries)].join(", ")}` : "",
+    paths.length ? `paths: ${[...new Set(paths)].join(", ")}` : "",
+  ].filter(Boolean);
+  return bits.join("\n");
+}
+
+/** Strip UNIQUE/pad lines from vector sections so Goal/Next stay actionable. */
+export function demotePadBlobsInVector(summary: string): string {
+  const lines = summary.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      out.push(line);
+      continue;
+    }
+    if (/^(Goal|Verified facts|Addresses|Landmines|Constraints|Next action|Live user)\b/i.test(trimmed)) {
+      out.push(line);
+      continue;
+    }
+    if (isBulkPadText(trimmed) || (trimmed.length > 240 && /UNIQUE[-_]/i.test(trimmed) && /[0-9a-f]{40}/i.test(trimmed))) {
+      out.push(stubBulkPadText(trimmed).split("\n")[0]!);
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 export function injectStateVector(summary: string, userText: string): string {
   const state = summary.trim();
-  const latest = userText.trim();
+  // Stub bulk pads first so canaries/paths survive; then soft-cap for the provider.
+  const latest = clipCompactUserText(stubBulkPadText(userText));
   return ["Current task state:", "", state, "", latest].join("\n");
 }
 
@@ -308,11 +375,11 @@ const LIVE_USER_SKIP = /^(continue|keep going|go on|go|ok|status|\.|…)$/i;
 
 /** Keep a specific live user turn in the recap so seed/handoff cannot drown it. */
 export function mergeLiveUser(summary: string, userText: string): string {
-  const live = userText.trim();
+  const live = stubBulkPadText(userText.trim());
   if (!live || (live.length < 48 && LIVE_USER_SKIP.test(live))) return summary;
   const snippet = live.slice(0, Math.min(80, live.length));
   if (summary.includes(snippet)) return summary;
-  const clipped = live.length > 1_200 ? `${live.slice(0, 1_199).trimEnd()}…` : live;
+  const clipped = clipCompactUserText(live);
   const block = `Live user\n${clipped}`;
   const next = extractNextBlock(summary);
   const trimmed = summary.trim();
@@ -517,8 +584,8 @@ function extractiveFallback(
   const prose = proseTurns(turns);
   const users = prose.filter((turn) => turn.role === "user");
   const assistants = prose.filter((turn) => turn.role === "assistant");
-  const firstUser = users[0]?.text.trim() ?? "";
-  const lastUser = users.at(-1)?.text.trim() ?? "";
+  const firstUser = stubBulkPadText(users[0]?.text.trim() ?? "");
+  const lastUser = stubBulkPadText(users.at(-1)?.text.trim() ?? "");
   const lastAssistant = assistants.at(-1)?.text.trim() ?? "";
   const blob = [seed, previousSummary, ...prose.map((turn) => turn.text)].join("\n");
   const addrs = harvestAddresses(blob);
@@ -580,7 +647,9 @@ function buildSummarizerPrompt(
   maxTokens: number,
   seed?: string,
 ): string {
-  const body = turns.map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${turn.text}`).join("\n\n");
+  const body = turns
+    .map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${stubBulkPadText(turn.text)}`)
+    .join("\n\n");
   const prior = previousSummary?.trim()
     ? `Previous state vector (lossy — prefer quoting the transcript when they disagree):\n${previousSummary.trim()}\n\n`
     : "";
@@ -640,11 +709,13 @@ async function summarizeViaLocalHost(
 }
 
 function sanitizeVector(text: string, maxTokens: number): string {
-  const stripped = text
-    .split("\n")
-    .filter((line) => !RESTART_LANGUAGE.test(line))
-    .join("\n")
-    .trim();
+  const stripped = demotePadBlobsInVector(
+    text
+      .split("\n")
+      .filter((line) => !RESTART_LANGUAGE.test(line))
+      .join("\n")
+      .trim(),
+  );
   const budgetChars = maxTokens * 4;
   if (stripped.length <= budgetChars) return stripped;
   return `${stripped.slice(0, Math.max(0, budgetChars - 1)).trimEnd()}…`;
