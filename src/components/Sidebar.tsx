@@ -47,9 +47,11 @@ import { TeamLibraryPanel } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
 import { BotPickerList } from "./BotPickerList";
 import {
+  loadBotOrder,
   loadCollapsedSections,
   loadSectionOrder,
   loadSidebarDensity,
+  saveBotOrder,
   saveCollapsedSections,
   saveSectionOrder,
   saveSidebarDensity,
@@ -61,13 +63,16 @@ import {
   BOTS_SECTION_ID,
   CHANNELS_SECTION_ID,
   PINNED_SECTION_ID,
+  applyItemOrder,
   mergeSectionOrder,
   moveSection,
   orderedSidebarSections,
   partitionSidebarBots,
   partitionSidebarGroups,
   placeSection,
+  replaceSubsetOrder,
   sameSectionOrder,
+  sidebarBotsReorderable,
   sidebarGoalRunPreview,
   sidebarLayoutInteractive,
   sidebarSectionCollapsed,
@@ -78,6 +83,14 @@ import {
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { botListItemPointerIntent } from "@/lib/sidebar-selection";
+import {
+  BOT_LONG_PRESS_MS,
+  botFloatPosition,
+  botLongPressShouldCancel,
+  botDropTarget,
+  readBotRowBoxes,
+  type BotLift,
+} from "@/lib/sidebar-bot-drag";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { profileInitials, SidebarProfileMenu } from "./SidebarProfileMenu";
@@ -901,15 +914,100 @@ export function BotListItem({
     </>
   );
   const onContextMenu = (event: React.MouseEvent) => {
+    if (pressRef.current?.lifted || floating) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     onMenu({ botId: bot.id, x: event.clientX, y: event.clientY });
   };
   const onSelect = (event: React.MouseEvent) => {
     if (renaming) return;
     const insideRenameInput = event.target instanceof HTMLInputElement;
-    if (botListItemPointerIntent(event.type, insideRenameInput) === "select") {
+    if (botListItemPointerIntent(event.type, insideRenameInput, Boolean(reorder?.dragging)) === "select") {
       dispatch({ type: "select", id: bot.id });
     }
+  };
+  const pointerOnChrome = (target: EventTarget | null) =>
+    target instanceof Element && Boolean(target.closest("button, input, textarea"));
+  const finishDrag = (commit: boolean) => {
+    const press = pressRef.current;
+    const wasLifted = Boolean(press?.lifted) || Boolean(reorder?.dragging);
+    if (wasLifted) {
+      suppressClickRef.current = true;
+      if (commit) reorder?.onRelease();
+      else reorder?.onCancel();
+    }
+    if (press && rowRef.current?.hasPointerCapture(press.pointerId)) {
+      rowRef.current.releasePointerCapture(press.pointerId);
+    }
+    clearPress();
+  };
+  // Click still opens the bot. A long press detaches the row so it hovers
+  // with the pointer and drops into a new up/down slot on release.
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!reorder?.enabled || renaming || floating || event.button !== 0) return;
+    if (pointerOnChrome(event.target)) return;
+    // A stuck lift from a missed pointerup must not block the next long-press.
+    if (reorder.dragging) reorder.onCancel();
+    clearPress();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointerId = event.pointerId;
+    const grabOffsetX = event.clientX - rect.left;
+    const grabOffsetY = event.clientY - rect.top;
+    const width = rect.width;
+    const height = rect.height;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const disposeEarly = () => {
+      window.removeEventListener("pointerup", onEarlyUp);
+      window.removeEventListener("pointercancel", onEarlyUp);
+    };
+    const onEarlyUp = () => {
+      if (pressRef.current && !pressRef.current.lifted) clearPress();
+      else disposeEarly();
+    };
+    window.addEventListener("pointerup", onEarlyUp);
+    window.addEventListener("pointercancel", onEarlyUp);
+    pressRef.current = {
+      timer: window.setTimeout(() => {
+        const press = pressRef.current;
+        if (!press || !reorder) return;
+        press.timer = null;
+        press.lifted = true;
+        press.disposeEarly?.();
+        press.disposeEarly = undefined;
+        rowRef.current?.setPointerCapture(pointerId);
+        reorder.onLift({
+          id: bot.id,
+          sectionId: reorder.sectionId,
+          width,
+          height,
+          grabOffsetX,
+          grabOffsetY,
+          x: press.lastX,
+          y: press.lastY,
+        });
+      }, BOT_LONG_PRESS_MS),
+      x: startX,
+      y: startY,
+      lastX: startX,
+      lastY: startY,
+      pointerId,
+      lifted: false,
+      disposeEarly,
+    };
+  };
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const press = pressRef.current;
+    if (!press || !reorder) return;
+    if (!press.lifted) {
+      press.lastX = event.clientX;
+      press.lastY = event.clientY;
+      if (botLongPressShouldCancel(press.x, press.y, event.clientX, event.clientY)) clearPress();
+      return;
+    }
+    reorder.onMovePointer(event.clientX, event.clientY);
   };
 
   return (
@@ -930,9 +1028,20 @@ export function BotListItem({
         }
         aria-busy={deleting || undefined}
         data-sidebar-bot-row={bot.id}
+        data-sidebar-bot-section={reorder?.sectionId}
+        data-sidebar-bot-float={floating ? "true" : undefined}
         onClick={onSelect}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => finishDrag(true)}
+        onPointerCancel={() => finishDrag(false)}
         onKeyDown={(event) => {
-          if (renaming) return;
+          if (renaming || floating) return;
+          if (reorder?.enabled && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+            event.preventDefault();
+            reorder.onKeyboardMove(event.key === "ArrowUp" ? -1 : 1);
+            return;
+          }
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             dispatch({ type: "select", id: bot.id });
@@ -1140,10 +1249,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; place: SectionDropPlace } | null>(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState("");
+  const [botOrder, setBotOrder] = useState<string[]>(() => loadBotOrder());
+  const [draggingBot, setDraggingBot] = useState<BotLift | null>(null);
+  const [botDrop, setBotDrop] = useState<{ id: string; place: SectionDropPlace } | null>(null);
   const sectionDragRef = useRef<{
     from: string | null;
     over: { id: string; place: SectionDropPlace } | null;
   }>({ from: null, over: null });
+  const draggingBotRef = useRef<BotLift | null>(null);
+  const botDropRef = useRef<{ id: string; place: SectionDropPlace } | null>(null);
+  const botListRef = useRef<HTMLDivElement>(null);
+  const botFloatRef = useRef<HTMLDivElement>(null);
+  const botDragWindowCleanupRef = useRef<(() => void) | null>(null);
+  const botDragMoveRafRef = useRef<number | null>(null);
 
   const setDensity = (next: SidebarDensity) => {
     setDensityState(next);
@@ -1192,6 +1310,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       setTeamLibraryOpen(true);
     });
   }, [remoteClient]);
+
+  useEffect(() => () => {
+    botDragWindowCleanupRef.current?.();
+    if (botDragMoveRafRef.current != null) window.cancelAnimationFrame(botDragMoveRafRef.current);
+  }, []);
 
   useEffect(() => {
     if (!teamFeedback) return;
@@ -1595,7 +1718,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </div>
 
       {/* Bot list */}
-      <div className="flex-1 overflow-y-auto px-2">
+      <div ref={botListRef} className={cn("flex-1 overflow-y-auto px-2", draggingBot && "touch-none")}>
         <div className="flex flex-col gap-0.5">
           {matchingBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">{t("sidebar.noMatch", { query })}</div>
@@ -1624,14 +1747,16 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   : sectionName
                     ? sectionedRooms.filter((group) => group.section === sectionName)
                     : [];
-            const sectionBotItems =
+            const sectionBotItems = orderedBotsInSection(
+              id,
               id === PINNED_SECTION_ID
                 ? pinnedBots
                 : id === BOTS_SECTION_ID
                   ? unsectionedBots
                   : sectionName
                     ? sectionedBots.filter((bot) => bot.section === sectionName)
-                    : [];
+                    : [],
+            );
             const collapsed = sectionCollapsed(id);
             const attention = collapsed
               ? sidebarSectionAttention(
@@ -1716,6 +1841,24 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {reorderAnnouncement}
       </p>
+      {floatingBot && draggingBot && floatPos &&
+        createPortal(
+          <div
+            ref={botFloatRef}
+            className="pointer-events-none fixed z-[80] origin-center scale-[1.03]"
+            style={{ left: floatPos.left, top: floatPos.top, width: draggingBot.width }}
+          >
+            <BotListItem
+              bot={floatingBot}
+              density={density}
+              onMenu={() => {}}
+              onArchive={() => {}}
+              archiveDisabled
+              floating
+            />
+          </div>,
+          document.body,
+        )}
 
       {/* Footer */}
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
