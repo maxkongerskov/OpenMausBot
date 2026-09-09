@@ -378,6 +378,7 @@ export interface ConfigStatus {
   rooms: { turnTimeoutMinutes: number };
   threads?: { maxConcurrentPerBot: number };
   compaction?: {
+    enabled: boolean;
     compactAround: number | null;
     vectorBudget: number | null;
     prompt: string | null;
@@ -438,6 +439,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     rooms: frame.rooms,
     threads: frame.threads,
     compaction: {
+      enabled: frame.compaction?.enabled !== false,
       compactAround: frame.compaction?.compactAround ?? null,
       vectorBudget: frame.compaction?.vectorBudget ?? null,
       prompt: frame.compaction?.prompt ?? null,

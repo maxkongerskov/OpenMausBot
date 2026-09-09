@@ -128,6 +128,7 @@ import {
   EVENTS_DIR,
   NATIVE_DIR,
   customMcpServers,
+  compactionEnabled,
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { MAX_REMOTE_COMMAND_LENGTH } from "./remote-computer.ts";
@@ -4154,6 +4155,7 @@ async function startTurn(
     userText: userPrompt,
   });
   const compactThisTurn =
+    compactionEnabled(cfg) &&
     (Boolean(decodeInjectId(model)) || envCeilingOverride(process.env) !== undefined) &&
     !opts?.cardContinuation &&
     shouldCompact({
@@ -4629,7 +4631,7 @@ async function startTurn(
             transcript,
           });
         }
-      } else if (priorRewrite?.vector) {
+      } else if (compactionEnabled(cfg) && priorRewrite?.vector) {
         bindLocalHostRewrite({
           threadId,
           modelId: model,
@@ -7615,6 +7617,7 @@ function configStatus() {
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
     threads: { maxConcurrentPerBot: maxConcurrentBotThreads(cfg) },
     compaction: {
+      enabled: compactionEnabled(cfg),
       compactAround: compactAroundTokens(cfg),
       vectorBudget: vectorBudgetTokens(cfg),
       prompt: vectorPrompt(cfg),

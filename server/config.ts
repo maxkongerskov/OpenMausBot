@@ -75,6 +75,8 @@ const vectorBudgetSchema = z
     message: `must be one of ${VECTOR_BUDGET_PRESETS.join(", ")}`,
   });
 const compactionConfigSchema = z.object({
+  /** Explicit Off for the whole Keep chatting card. Absent/true = on (Auto/presets). */
+  enabled: z.boolean().optional(),
   compactAround: compactAroundSchema.nullable().optional(),
   vectorBudget: vectorBudgetSchema.nullable().optional(),
   prompt: z.string().max(VECTOR_PROMPT_MAX).nullable().optional(),
@@ -346,9 +348,11 @@ export interface AppConfig {
   rooms?: { turnTimeoutMinutes: number };
   threads?: { maxConcurrentPerBot: number };
   /** Compact around ceiling, vector page size, rewrite prompt, and optional
-   * recap archive. `null`/absent compactAround = Auto. `null` prompt = house
+   * recap archive. `enabled: false` turns the whole Keep chatting card Off.
+   * Absent/true = on. `null`/absent compactAround = Auto. `null` prompt = house
    * one-pager. `null` vectorArchiveDir = each bot's private state-vectors folder. */
   compaction?: {
+    enabled?: boolean;
     compactAround?: number | null;
     vectorBudget?: number | null;
     prompt?: string | null;
@@ -479,6 +483,12 @@ export function roomTurnTimeoutMinutes(cfg: AppConfig): number {
 
 export function maxConcurrentBotThreads(cfg: AppConfig): number {
   return cfg.threads?.maxConcurrentPerBot ?? DEFAULT_MAX_CONCURRENT_BOT_THREADS;
+}
+
+/** False when Settings → Keep chatting is Off. Absent/true keeps current Auto/presets. */
+export function compactionEnabled(cfg: AppConfig): boolean {
+  return cfg.compaction?.enabled !== false;
+}
 }
 
 /** Compact around preset, or null for Auto. */
