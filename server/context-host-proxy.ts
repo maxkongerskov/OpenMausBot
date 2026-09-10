@@ -4,7 +4,14 @@
 // *provider* sees a fresh context: system messages + state vector + the
 // current user turn (and any tool follow-ups after it).
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clipCompactUserText, COMPACT_USER_CLIP_CHARS, stubBulkPadText } from "./context-compact.ts";
+import {
+  appendMidTaskContinuitySystem,
+  clipCompactUserText,
+  compactedProviderUserTurns,
+  COMPACT_USER_CLIP_CHARS,
+  MID_TASK_CONTINUITY_SYSTEM,
+  stubBulkPadText,
+} from "./context-compact.ts";
 import { decodeInjectId, hostApiKey, localHost } from "./drivers/local-inject.ts";
 
 const AUTH_PREFIX = "ombv1.";
@@ -65,16 +72,30 @@ export function messageMatchesCompactNeedle(content: string, needle: string): bo
   return text.length >= n.length * 0.5;
 }
 
-/** Keep system/developer, inject the vector, keep from `userText` onward.
- * After a refresh, `userText` is the compacted user turn so later chat and
- * tool follow-ups stay. Drop only the pre-compaction tail. Oversized compact-turn pastes are clipped for the provider (full text remains in the OMB transcript). */
+function withMidTaskContinuity(prefix: ChatMessage[]): ChatMessage[] {
+  if (prefix.length === 0) {
+    return [{ role: "system", content: MID_TASK_CONTINUITY_SYSTEM }];
+  }
+  const last = prefix[prefix.length - 1]!;
+  const content = messageText(last);
+  return [
+    ...prefix.slice(0, -1),
+    { ...last, content: appendMidTaskContinuitySystem(content) },
+  ];
+}
+
+/** Keep system/developer (+ mid-task continuity), inject vector, keep from live ask onward.
+ * Shared shape with Grok/openai-chat compacted path via compactedProviderUserTurns. */
 export function rewriteOpenAIMessages(messages: ChatMessage[], vector: string, userText: string): ChatMessage[] {
-  const prefix = messages.filter((message) => {
-    const role = typeof message.role === "string" ? message.role : "";
-    return role === "system" || role === "developer";
-  });
+  const prefix = withMidTaskContinuity(
+    messages.filter((message) => {
+      const role = typeof message.role === "string" ? message.role : "";
+      return role === "system" || role === "developer";
+    }),
+  );
+  const { vector: stateVector, liveAsk } = compactedProviderUserTurns(vector, userText);
   // Bare vector — no "Current task state" framing (models echo/narrate it).
-  const state: ChatMessage = { role: "user", content: vector.trim() };
+  const state: ChatMessage = { role: "user", content: stateVector };
   const needle = userText.trim();
   let start = -1;
   if (needle) {
@@ -94,21 +115,28 @@ export function rewriteOpenAIMessages(messages: ChatMessage[], vector: string, u
       }
     }
   }
-  const suffix = (start >= 0 ? messages.slice(start) : []).filter((message) => {
+  let suffix = (start >= 0 ? messages.slice(start) : []).filter((message) => {
     const role = typeof message.role === "string" ? message.role : "";
     return role !== "system" && role !== "developer";
   });
+  // If the needle was missing from history, still emit the live ask as its own user turn.
+  if (suffix.length === 0 && liveAsk) {
+    suffix = [{ role: "user", content: liveAsk }];
+  }
   // Only the compact-turn needle is stubbed/clipped for the provider. Later
   // fat pastes must stay full so fill/SPT can climb again and a second
   // compact can fire — clipping every oversized suffix turn froze the chip
   // ~post-refresh size and blocked multi-compact.
-  const clippedSuffix = suffix.map((message) => {
+  const clippedSuffix = suffix.map((message, index) => {
     if (message.role !== "user") return message;
     const text = messageText(message);
-    if (text.length <= COMPACT_USER_CLIP_CHARS) return message;
     if (needle && messageMatchesCompactNeedle(text, needle)) {
-      return { ...message, content: clipCompactUserText(stubBulkPadText(text)) };
+      return { ...message, content: liveAsk || clipCompactUserText(stubBulkPadText(text)) };
     }
+    if (index === 0 && liveAsk && text.trim() === needle) {
+      return { ...message, content: liveAsk };
+    }
+    if (text.length <= COMPACT_USER_CLIP_CHARS) return message;
     return message;
   });
   return [...prefix, state, ...clippedSuffix];

@@ -8,10 +8,12 @@ import { join, resolve } from "node:path";
 import {
   collectCompactSeedDirs,
   clipKeepingNext,
+  compactedProviderUserTurns,
   compactSession,
   demotePadBlobsInVector,
   extractNextBlock,
   fillTokensFor,
+  forwardNextFromLiveAsk,
   harvestAddresses,
   harvestWorkPointers,
   HANDOFF_AS_VECTOR_MIN_CHARS,
@@ -24,11 +26,13 @@ import {
   looksLikeHandoff,
   mergeHarvestedAddresses,
   mergeWorkPointers,
+  MID_TASK_CONTINUITY_SYSTEM,
   proseTurns,
   readGitWorkingTree,
   readWorkspaceSeed,
   generateSideText,
   resolveOutgoingTurn,
+  sanitizeForwardOnlyVector,
   stubBulkPadText,
   stripSecretLines,
   summarizeViaLocalHost,
@@ -55,9 +59,44 @@ describe("injectStateVector", () => {
   });
 
   it("DEFAULT_EXTRACTION_PROMPT forbids confirm-previous-turn Next action", () => {
-    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/never set next action to confirm/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/never set next action to done/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/confirm last turn/);
     expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/Fill #N/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/forward concrete step/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/wait for next/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/goal or constraints/);
+  });
+});
+
+describe("sanitizeForwardOnlyVector", () => {
+  it("replaces banned Next bodies with one forward line from the live ask", () => {
+    const summary = [
+      "Goal",
+      "Keep chatting Fill #3 harness",
+      "Constraints",
+      "Fill #2 only; no patching",
+      "Next action",
+      "wait for next instruction",
+    ].join("\n");
+    const cleaned = sanitizeForwardOnlyVector(summary, "Reply with CANARY_OMB_TAIL_9C2E then stop.");
+    expect(cleaned).not.toMatch(/Fill\s*#\d+/i);
+    expect(cleaned).toContain("Goal");
+    expect(cleaned).toContain("Keep chatting");
+    expect(cleaned).toContain("Next action");
+    expect(cleaned.toLowerCase()).not.toMatch(/wait for next/);
+    expect(cleaned).toContain(forwardNextFromLiveAsk("Reply with CANARY_OMB_TAIL_9C2E then stop."));
+  });
+
+  it("leaves a forward Next alone", () => {
+    const summary = "Goal\nship\nNext action\nedit src/auth.ts";
+    expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("edit src/auth.ts");
+  });
+
+  it("compactsProviderUserTurns splits vector and live ask", () => {
+    const split = compactedProviderUserTurns("Goal\nvault\nNext action\nask canary", "what is left?");
+    expect(split).toEqual({ vector: "Goal\nvault\nNext action\nask canary", liveAsk: "what is left?" });
+    expect(MID_TASK_CONTINUITY_SYSTEM.toLowerCase()).toMatch(/mid-task/);
+    expect(MID_TASK_CONTINUITY_SYSTEM.toLowerCase()).not.toMatch(/compacted|restart/);
   });
 });
 
@@ -113,7 +152,7 @@ describe("bulk pad demotion", () => {
 
 
 describe("resolveOutgoingTurn", () => {
-  it("drops the native cursor and the old transcript when compacted", () => {
+  it("drops the native cursor and splits vector/live ask when compacted", () => {
     const out = resolveOutgoingTurn({
       compacted: true,
       summary: "Goal\nship it\nNext action\nopen src/auth.ts",
@@ -123,9 +162,12 @@ describe("resolveOutgoingTurn", () => {
       transcript,
     });
     expect(out.resumeCursor).toBeUndefined();
-    expect(out.transcript).toEqual([]);
-    expect(out.text).toBe(injectStateVector("Goal\nship it\nNext action\nopen src/auth.ts", "continue"));
+    expect(out.transcript).toEqual([
+      { role: "user", text: "Goal\nship it\nNext action\nopen src/auth.ts" },
+    ]);
+    expect(out.text).toBe("continue");
     expect(out.text).not.toContain("joining this conversation");
+    expect(out.text).not.toContain("Goal\nship it");
   });
 
   it("passes a live session through untouched", () => {
@@ -692,7 +734,8 @@ describe("micro notebook compact priority", () => {
     expect(seen).toContain("LIVE_TURN_9A");
     expect(seen).toContain("Patched store.ts");
     expect(seen).toMatch(/do NOT copy old dogfood canaries/i);
-    expect(seen.toLowerCase()).toMatch(/never confirm\/verify\/search for a previous chat turn/);
+    expect(seen.toLowerCase()).toMatch(/confirm last turn/);
+    expect(seen.toLowerCase()).toMatch(/verify\/search for a previous chat turn/);
     expect(seen).not.toContain("Transcript (tool chips omitted)");
     expect(result.summary).toContain("0xDeadBeef01");
     expect(result.summary).toContain("LIVE_TURN_9A");

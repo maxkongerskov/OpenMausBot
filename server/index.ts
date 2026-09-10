@@ -232,6 +232,7 @@ import { decodeInjectId } from "./drivers/local-inject.ts";
 import { AUTO_COMPACT_AROUND_TOKENS } from "../shared/compact-around.ts";
 import { advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
 import {
+  appendMidTaskContinuitySystem,
   clipCompactUserText,
   collectCompactSeedDirs,
   compactSession,
@@ -5302,6 +5303,8 @@ async function startTurn(
         });
         await hostProxy.ensureListening();
       }
+      const midTaskContinuity =
+        compactThisTurn || Boolean(hostProxy.get(threadId)?.vector);
       watchdog.watch(threadId, bot.id);
       const computerPromptKind: ComputerPromptKind | null =
         computerKind === "vm"
@@ -5353,7 +5356,7 @@ async function startTurn(
         resumeCursor: outgoing.resumeCursor,
         ...(!compactThisTurn && recoveryText !== undefined ? { recoveryText } : {}),
         transcript: outgoing.transcript,
-        system: prompt.text,
+        system: midTaskContinuity ? appendMidTaskContinuitySystem(prompt.text) : prompt.text,
         systemStable: prompt.stable,
         systemVolatile: prompt.volatile,
         integrations,
