@@ -13,6 +13,7 @@ import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { workspaceDir } from "./workspace.ts";
+import { deleteTaskMicroVectors } from "./micro-vectors.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -1790,6 +1791,9 @@ export class Store {
     if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
     if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
     bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+    // Drop that task's micro-vector notebook (tasks/<threadId>/…).
+    // deleteBot already recursive-wipes workspaceDir(id), which includes tasks/.
+    deleteTaskMicroVectors(botId, threadId);
     this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
       bot.threadId = bot.tasks[0]!.threadId;

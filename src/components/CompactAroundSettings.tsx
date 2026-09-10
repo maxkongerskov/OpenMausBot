@@ -25,6 +25,7 @@ export function CompactAroundSettings() {
   const vectorBudget = state.config?.compaction?.vectorBudget ?? null;
   const savedPrompt = state.config?.compaction?.prompt ?? null;
   const keepVectors = state.config?.compaction?.keepVectors === true;
+  const microVectors = state.config?.compaction?.microVectorsEnabled === true;
   const archiveDir = state.config?.compaction?.vectorArchiveDir ?? null;
   const envOverride = state.config?.compaction?.envOverride ?? null;
   const [saving, setSaving] = useState<string | null>(null);
@@ -232,6 +233,24 @@ export function CompactAroundSettings() {
           <span className="shrink-0 tabular-nums">
             {promptDraft.length.toLocaleString()} / {VECTOR_PROMPT_MAX.toLocaleString()}
           </span>
+        </div>
+      </div>
+
+      <div className={cn("flex flex-col gap-2", aroundOff && "opacity-50")}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-medium text-ink">Build a running notebook</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+              Cheap per-turn micro notes under each bot/task so the next refresh keeps early truths. Off by
+              default. Default path: {'…/workspaces/<bot>/tasks/<task>/micro-vectors/.'}
+            </p>
+          </div>
+          <Switch
+            checked={microVectors}
+            disabled={detailsDisabled}
+            aria-label="Build a running notebook"
+            onClick={() => void patch({ microVectorsEnabled: !microVectors })}
+          />
         </div>
       </div>
 

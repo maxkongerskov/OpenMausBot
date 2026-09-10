@@ -81,6 +81,8 @@ const compactionConfigSchema = z.object({
   vectorBudget: vectorBudgetSchema.nullable().optional(),
   prompt: z.string().max(VECTOR_PROMPT_MAX).nullable().optional(),
   keepVectors: z.boolean().optional(),
+  /** Opt-in per-turn micro notes under each bot/task. Absent/false = off. */
+  microVectorsEnabled: z.boolean().optional(),
   vectorArchiveDir: z
     .string()
     .max(1024)
@@ -357,6 +359,8 @@ export interface AppConfig {
     vectorBudget?: number | null;
     prompt?: string | null;
     keepVectors?: boolean;
+    /** Opt-in running notebook between compact cycles. Absent/false = off. */
+    microVectorsEnabled?: boolean;
     vectorArchiveDir?: string | null;
   };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
@@ -511,6 +515,11 @@ export function vectorPrompt(cfg: AppConfig): string | null {
 
 export function keepVectorsEnabled(cfg: AppConfig): boolean {
   return cfg.compaction?.keepVectors === true;
+}
+
+/** Opt-in micro state vectors (per-task notebook). Absent/false = off. */
+export function microVectorsEnabled(cfg: AppConfig): boolean {
+  return cfg.compaction?.microVectorsEnabled === true;
 }
 
 /** Custom archive folder, or null to use each bot's private state-vectors dir. */

@@ -20,6 +20,7 @@ import { customMcpServers,
   vectorBudgetTokens,
   vectorPrompt,
   keepVectorsEnabled,
+  microVectorsEnabled,
   vectorArchiveDir,
   roomTurnTimeoutMinutes,
   showToolCallsEnabled,
@@ -370,6 +371,12 @@ describe("configuration boundaries", () => {
     });
     expect(keepVectorsEnabled({})).toBe(false);
     expect(keepVectorsEnabled({ compaction: { keepVectors: true } })).toBe(true);
+    expect(parseConfigPatch({ compaction: { microVectorsEnabled: true } })).toEqual({
+      compaction: { microVectorsEnabled: true },
+    });
+    expect(microVectorsEnabled({})).toBe(false);
+    expect(microVectorsEnabled({ compaction: {} })).toBe(false);
+    expect(microVectorsEnabled({ compaction: { microVectorsEnabled: true } })).toBe(true);
     expect(vectorArchiveDir({})).toBeNull();
     expect(() => parseConfigPatch({ compaction: { vectorArchiveDir: "/Applications" } })).toThrow(
       "compaction.vectorArchiveDir",

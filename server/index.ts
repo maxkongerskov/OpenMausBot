@@ -111,6 +111,7 @@ import {
   vectorBudgetTokens,
   vectorPrompt,
   keepVectorsEnabled,
+  microVectorsEnabled,
   vectorArchiveDir,
   roomTurnTimeoutMinutes,
   saveConfig,
@@ -224,6 +225,12 @@ import {
   resolveOutgoingTurn,
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
+import {
+  appendMicroVector,
+  buildMicroEntryFromExchange,
+  markMicroCompacted,
+  readMicroLedger,
+} from "./micro-vectors.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, vectorBudget } from "./context-rebuild.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh } from "./turn-context.ts";
@@ -3364,6 +3371,24 @@ bus.subscribe((event: RuntimeEvent) => {
           if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
           else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
+        // Opt-in micro notebook: one heuristic note per settled user+assistant exchange.
+        if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg)) {
+          const path = store.activePath(event.threadId);
+          const lastUser = [...path].reverse().find((m) => m.role === "user" && m.kind === "text");
+          const entry = buildMicroEntryFromExchange({
+            userText: lastUser?.text,
+            assistantText: reply,
+          });
+          if (entry) {
+            const taskRec = store.taskByThread(bot.id, event.threadId);
+            appendMicroVector({
+              botId: bot.id,
+              threadId: event.threadId,
+              taskTitle: taskRec?.title,
+              entry,
+            });
+          }
+        }
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
         // Group-origin routines belong to that channel's unread state. Their
@@ -4578,6 +4603,8 @@ async function startTurn(
       });
       const priorRewrite = hostProxy.get(threadId);
       if (compactThisTurn) {
+        const microLedger =
+          microVectorsEnabled(cfg) ? readMicroLedger(bot.id, threadId) : "";
         const result = await compactSession({
           transcript: facing.lastCompaction
             ? [{ role: "assistant", text: facing.lastCompaction.summary }, ...transcript]
@@ -4596,6 +4623,7 @@ async function startTurn(
             instructions: bot.description,
           }),
           workingCwd: existingDirectory(task.cwd) ?? existingDirectory(bot.cwd),
+          ...(microLedger ? { microLedger } : {}),
         });
         if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
           throw new DirectTurnSetupCancelled("turn stopped during compaction");
@@ -4618,6 +4646,9 @@ async function startTurn(
             customDir: vectorArchiveDir(cfg),
             botLabel: bot.name || bot.id,
           });
+        }
+        if (microVectorsEnabled(cfg)) {
+          markMicroCompacted({ botId: bot.id, threadId });
         }
         bindLocalHostRewrite({ threadId, modelId: model, vector: result.summary, userText: userPrompt });
         await hostProxy.ensureListening();
@@ -7624,6 +7655,7 @@ function configStatus() {
       vectorBudget: vectorBudgetTokens(cfg),
       prompt: vectorPrompt(cfg),
       keepVectors: keepVectorsEnabled(cfg),
+      microVectorsEnabled: microVectorsEnabled(cfg),
       vectorArchiveDir: vectorArchiveDir(cfg),
       envOverride: envCeilingOverride() ?? null,
     },
