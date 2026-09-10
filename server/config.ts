@@ -567,7 +567,6 @@ export function maxConcurrentBotThreads(cfg: AppConfig): number {
 export function compactionEnabled(cfg: AppConfig): boolean {
   return cfg.compaction?.enabled !== false;
 }
-}
 
 /** Compact around preset, or null for Auto. */
 export function compactAroundTokens(cfg: AppConfig): number | null {
