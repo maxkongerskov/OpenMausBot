@@ -138,8 +138,9 @@ function stripFillLabelsInGoalConstraints(summary: string): string {
       out.push(line);
       continue;
     }
-    if ((section === "goal" || section === "constraints") && /\bFill\s*#\d+\b/i.test(trimmed)) {
-      const cleaned = line.replace(/\bFill\s*#\d+\b/gi, "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+$/g, "");
+    if ((section === "goal" || section === "constraints") && (FILL_HASH_LABEL.lastIndex = 0, FILL_HASH_LABEL.test(trimmed))) {
+      FILL_HASH_LABEL.lastIndex = 0;
+      const cleaned = line.replace(FILL_HASH_LABEL, "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+$/g, "");
       if (cleaned.trim()) out.push(cleaned);
       continue;
     }
