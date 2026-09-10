@@ -513,6 +513,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
       vectorBudget: frame.compaction?.vectorBudget ?? null,
       prompt: frame.compaction?.prompt ?? null,
       keepVectors: frame.compaction?.keepVectors === true,
+      microVectorsEnabled: frame.compaction?.microVectorsEnabled === true,
       vectorArchiveDir: frame.compaction?.vectorArchiveDir ?? null,
       envOverride: frame.compaction?.envOverride ?? null,
     },
