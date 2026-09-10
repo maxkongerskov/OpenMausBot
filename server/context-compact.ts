@@ -96,7 +96,7 @@ export const MID_TASK_CONTINUITY_SYSTEM =
 
 /** Open/Next bodies that are stalls / soft-park / meta — replace with a forward line from the live ask. */
 const NEXT_ACTION_BAN =
-  /\b(?:done\.?|wait for next|provide(?:\s+a)?\s+prompt|await(?:ing)?(?:\s+the)?\s+user|await(?:ing)?(?:\s+the)?\s+next\s+(?:instruction|task|step|message|prompt)|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|wait(?:ing)?(?:\s+for)?(?:\s+the)?\s+(?:next|user)(?:\s+(?:instruction|task|step|message|prompt))?)\b/i;
+  /\b(?:done\.?|wait for next|provide(?:\s+a)?\s+prompt|await(?:ing)?(?:\s+the)?\s+user|await(?:ing)?(?:\s+the)?\s+next\b|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|wait(?:ing)?(?:\s+for)?(?:\s+the)?\s+(?:next|user)\b|successor should await)\b/i;
 
 const FILL_HASH_LABEL = /\bFill\s*#\d+\b/gi;
 
