@@ -26,10 +26,13 @@ import {
   proseTurns,
   readGitWorkingTree,
   readWorkspaceSeed,
+  generateSideText,
   resolveOutgoingTurn,
   stubBulkPadText,
   stripSecretLines,
+  summarizeViaLocalHost,
 } from "./context-compact.ts";
+import { decodeInjectId } from "./drivers/local-inject.ts";
 import type { FacingTurn } from "./context-rebuild.ts";
 
 const transcript: FacingTurn[] = [
@@ -693,5 +696,80 @@ describe("micro notebook compact priority", () => {
     });
     expect(result.summary).toContain("store.ts");
     expect(result.summary).not.toContain("CANARY_LONGRUN_D4C1");
+  });
+});
+
+describe("generateSideText", () => {
+  it("prefers local inject (decodeInjectId) over generateText", async () => {
+    const modelId = "unsloth::unsloth/gemma-4-26B-A4B-it-GGUF";
+    expect(decodeInjectId(modelId)).toEqual({
+      host: "unsloth",
+      model: "unsloth/gemma-4-26B-A4B-it-GGUF",
+    });
+
+    let generateTextCalls = 0;
+    let fetchUrl = "";
+    let fetchBody: unknown;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      fetchUrl = String(input);
+      fetchBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "Goal\nfrom inject\nNext action\ncontinue" } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const text = await generateSideText({
+      modelId,
+      prompt: "extract notebook",
+      maxTokens: 512,
+      env: { UNSLOTH_STUDIO_AUTH_TOKEN: "test-token" },
+      fetchImpl,
+      generateText: async () => {
+        generateTextCalls += 1;
+        return "from generateText fallback";
+      },
+    });
+
+    expect(text).toContain("from inject");
+    expect(generateTextCalls).toBe(0);
+    expect(fetchUrl).toContain("/chat/completions");
+    expect(fetchBody).toMatchObject({
+      model: "unsloth/gemma-4-26B-A4B-it-GGUF",
+      messages: [{ role: "user", content: "extract notebook" }],
+    });
+  });
+
+  it("falls back to generateText when modelId is not inject", async () => {
+    const text = await generateSideText({
+      modelId: "grok-4",
+      prompt: "hi",
+      generateText: async () => "side text from generateText",
+      fetchImpl: (async () => {
+        throw new Error("fetch should not run for non-inject ids");
+      }) as typeof fetch,
+    });
+    expect(text).toBe("side text from generateText");
+  });
+
+  it("returns null when inject and generateText both fail", async () => {
+    const text = await generateSideText({
+      modelId: "unsloth::unsloth/gemma-4-26B-A4B-it-GGUF",
+      prompt: "hi",
+      env: { UNSLOTH_STUDIO_AUTH_TOKEN: "test-token" },
+      fetchImpl: (async () => new Response("nope", { status: 500 })) as typeof fetch,
+      generateText: async () => {
+        throw new Error("xAI missing");
+      },
+    });
+    expect(text).toBeNull();
+  });
+
+  it("summarizeViaLocalHost returns null for non-inject ids", async () => {
+    await expect(
+      summarizeViaLocalHost("grok-3-mini", "prompt", 256, {}, fetch),
+    ).resolves.toBeNull();
   });
 });

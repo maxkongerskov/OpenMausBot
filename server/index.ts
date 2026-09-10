@@ -237,6 +237,7 @@ import {
   compactSession,
   existingDirectory,
   fillTokensFor,
+  generateSideText,
   resolveOutgoingTurn,
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
@@ -2788,8 +2789,8 @@ const providerLabel = (provider: string): string => {
   const bare = provider.replace(/Agent$/, "");
   return bare.charAt(0).toUpperCase() + bare.slice(1);
 };
-/** Log once when micro vectors are on but the provider lacks generateText. */
-let warnedMicroNoGenerateText = false;
+/** Log once when micro notebook side LLM (inject + generateText) both fail. */
+let warnedMicroSideLlmFail = false;
 const MICRO_NOTEBOOK_TIMEOUT_MS = 75_000;
 
 
@@ -3741,52 +3742,60 @@ bus.subscribe((event: RuntimeEvent) => {
           else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
         // Opt-in micro notebook: side LLM reads the assistant's visible reply only.
-        // Truth is LLM intelligence — never fall back to heuristic extractors.
+        // Prefer local inject (bot selected model id) over provider generateText
+        // (e.g. grok instance's hardcoded grok-3-mini). No heuristic fallback.
         // Fire-and-forget (this bus handler is sync); timeout + swallow so the UI never blocks.
         if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg) && reply.trim()) {
           const instance = registry.get(bot.modelSelection.instanceId);
-          if (!instance?.generateText) {
-            if (!warnedMicroNoGenerateText) {
-              warnedMicroNoGenerateText = true;
-              console.warn(
-                "micro vectors: provider has no generateText — skipping notebook write (no heuristic fallback)",
-              );
-            }
-          } else {
-            const taskRec = store.taskByThread(bot.id, event.threadId);
-            const botId = bot.id;
-            const threadId = event.threadId;
-            const replyForMicro = reply;
-            const generateText = instance.generateText.bind(instance);
-            void (async () => {
-              try {
-                const prompt = buildMicroNotebookPrompt(replyForMicro);
-                const raw = await Promise.race([
-                  generateText(prompt),
-                  new Promise<string>((_resolve, reject) => {
-                    const timer = setTimeout(
-                      () => reject(new Error("micro notebook timeout")),
-                      MICRO_NOTEBOOK_TIMEOUT_MS,
-                    );
-                    timer.unref?.();
-                  }),
-                ]);
-                const entry = parseMicroNotebookResult(raw, {
-                  sourceTurnChars: replyForMicro.length,
-                });
-                if (entry) {
-                  appendMicroVector({
-                    botId,
-                    threadId,
-                    taskTitle: taskRec?.title,
-                    entry,
-                  });
+          const modelId =
+            store.bot(bot.id)?.modelSelection?.model ?? bot.modelSelection.model;
+          const generateText = instance?.generateText?.bind(instance);
+          const taskRec = store.taskByThread(bot.id, event.threadId);
+          const botId = bot.id;
+          const threadId = event.threadId;
+          const replyForMicro = reply;
+          void (async () => {
+            try {
+              const prompt = buildMicroNotebookPrompt(replyForMicro);
+              const raw = await Promise.race([
+                generateSideText({
+                  modelId,
+                  prompt,
+                  generateText,
+                  maxTokens: 1024,
+                }),
+                new Promise<string | null>((_resolve, reject) => {
+                  const timer = setTimeout(
+                    () => reject(new Error("micro notebook timeout")),
+                    MICRO_NOTEBOOK_TIMEOUT_MS,
+                  );
+                  timer.unref?.();
+                }),
+              ]);
+              if (!raw) {
+                if (!warnedMicroSideLlmFail) {
+                  warnedMicroSideLlmFail = true;
+                  console.warn(
+                    "micro vectors: inject + generateText both failed — skipping notebook write (no heuristic fallback)",
+                  );
                 }
-              } catch {
-                /* never throw into the bus — disk/LLM failures are soft */
+                return;
               }
-            })();
-          }
+              const entry = parseMicroNotebookResult(raw, {
+                sourceTurnChars: replyForMicro.length,
+              });
+              if (entry) {
+                appendMicroVector({
+                  botId,
+                  threadId,
+                  taskTitle: taskRec?.title,
+                  entry,
+                });
+              }
+            } catch {
+              /* never throw into the bus — disk/LLM/timeout failures are soft */
+            }
+          })();
         }
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         // A routine's result belongs to its reporting thread's unread state.
