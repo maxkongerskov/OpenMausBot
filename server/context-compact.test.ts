@@ -628,3 +628,70 @@ describe("live work pointers", () => {
     expect(merged).not.toMatch(/^Last error\b/m);
   });
 });
+
+describe("micro notebook compact priority", () => {
+  it("prefers notebook + last turn over MEMORY canaries in the summarizer prompt", async () => {
+    let seen = "";
+    const result = await compactSession({
+      transcript: [
+        { role: "user", text: "old chatter about something else" },
+        { role: "assistant", text: "old reply" },
+      ],
+      userText: "Live: continue the store fix; canary LIVE_TURN_9A",
+      lastAssistantText: "Patched store.ts. Next: run vitest.",
+      maxTokens: 512,
+      workspaceSeed:
+        "Dogfood Long Run: canary CANARY_LONGRUN_D4C1, vault path /tmp/omb-vault-longrun.\nDo not redo.",
+      microLedger: [
+        "[2026-09-10T01:00:00.000Z] assistant notebook",
+        "Goal",
+        "Fix store wipe",
+        "Verified facts",
+        "Patched store.ts at 0xDeadBeef01",
+        "Addresses",
+        "server/store.ts",
+        "Next action",
+        "run vitest",
+      ].join("\n"),
+      summarize: async (prompt) => {
+        seen = prompt;
+        return [
+          "Goal",
+          "Fix store wipe",
+          "Verified facts",
+          "Patched store.ts at 0xDeadBeef01",
+          "LIVE_TURN_9A",
+          "Addresses",
+          "server/store.ts",
+          "Landmines",
+          "(none)",
+          "Constraints",
+          "(none)",
+          "Next action",
+          "run vitest",
+        ].join("\n");
+      },
+    });
+    expect(seen).toContain("PRIMARY TRUTH");
+    expect(seen).toContain("Fix store wipe");
+    expect(seen).toContain("Last turn");
+    expect(seen).toContain("LIVE_TURN_9A");
+    expect(seen).toContain("Patched store.ts");
+    expect(seen).toMatch(/do NOT copy old dogfood canaries/i);
+    expect(seen).not.toContain("Transcript (tool chips omitted)");
+    expect(result.summary).toContain("0xDeadBeef01");
+    expect(result.summary).toContain("LIVE_TURN_9A");
+  });
+
+  it("extractive fallback uses notebook facts instead of MEMORY canaries when present", async () => {
+    const result = await compactSession({
+      transcript: [{ role: "user", text: "keep going on store" }],
+      userText: "keep going on store",
+      maxTokens: 512,
+      workspaceSeed: "Dogfood canary CANARY_LONGRUN_D4C1 must stay in MEMORY forever.",
+      microLedger: "Goal\nFix store\nVerified facts\nstore.ts patched\nAddresses\nserver/store.ts\nNext action\nrun tests",
+    });
+    expect(result.summary).toContain("store.ts");
+    expect(result.summary).not.toContain("CANARY_LONGRUN_D4C1");
+  });
+});

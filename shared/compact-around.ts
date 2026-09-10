@@ -67,7 +67,9 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "Constraints: never-do rules. " +
   "Next action: exactly one concrete step, complete, last section, never truncated. " +
   "Drop long recipes, logs, UNIQUE/pad blobs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). Keep short canaries, paths, and ids — never paste bulk hex. " +
-  "Prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +
+  "When a running notebook (micro state vectors) is present, that notebook plus the last turn are the truth sources for Verified facts / Goal / Addresses / Next — do not promote unrelated MEMORY.md dogfood canaries into Verified facts. " +
+  "Without a notebook, prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +
+  "MEMORY.md is for durable constraints still clearly relevant; never copy old canaries when the notebook contradicts or covers the task. " +
   "The latest user message is live truth — quote it; do not replace it with an older Goal from seed. " +
   "This page must work for any local task (code, research, ops), not one domain. " +
   "Ignore [tool …] chips. Quote verbatim. Do not invent. Do not invent the next patch or feature.";
