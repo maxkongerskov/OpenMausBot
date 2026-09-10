@@ -580,6 +580,7 @@ function extractiveFallback(
   previousSummary: string | undefined,
   maxTokens: number,
   seed?: string,
+  microLedger?: string,
 ): string {
   const prose = proseTurns(turns);
   const users = prose.filter((turn) => turn.role === "user");
@@ -587,16 +588,20 @@ function extractiveFallback(
   const firstUser = stubBulkPadText(users[0]?.text.trim() ?? "");
   const lastUser = stubBulkPadText(users.at(-1)?.text.trim() ?? "");
   const lastAssistant = assistants.at(-1)?.text.trim() ?? "";
-  const blob = [seed, previousSummary, ...prose.map((turn) => turn.text)].join("\n");
+  const notebook = microLedger?.trim() ?? "";
+  const blob = [notebook || undefined, seed, previousSummary, ...prose.map((turn) => turn.text)].join("\n");
   const addrs = harvestAddresses(blob);
-  const facts = seed?.trim()
-    ? seed.trim().slice(0, 2_500)
-    : previousSummary?.trim()
-      ? previousSummary.trim().slice(0, 1_200)
-      : assistants
-          .slice(-4)
-          .map((turn) => `- ${turn.text.replace(/\s+/g, " ").trim().slice(0, 240)}`)
-          .join("\n") || "(none)";
+  // When a notebook is present, never smear MEMORY/seed canaries into Verified facts.
+  const facts = notebook
+    ? notebook.slice(0, 2_500)
+    : seed?.trim()
+      ? seed.trim().slice(0, 2_500)
+      : previousSummary?.trim()
+        ? previousSummary.trim().slice(0, 1_200)
+        : assistants
+            .slice(-4)
+            .map((turn) => `- ${turn.text.replace(/\s+/g, " ").trim().slice(0, 240)}`)
+            .join("\n") || "(none)";
   const sections = [
     "Goal",
     firstUser.slice(0, 400) || "(not stated)",
@@ -647,28 +652,46 @@ function buildSummarizerPrompt(
   maxTokens: number,
   seed?: string,
   microLedger?: string,
+  lastTurn?: { userText?: string; assistantText?: string },
 ): string {
   const body = turns
     .map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${stubBulkPadText(turn.text)}`)
     .join("\n\n");
   const prior = previousSummary?.trim()
-    ? `Previous state vector (lossy — prefer quoting the transcript when they disagree):\n${previousSummary.trim()}\n\n`
+    ? `Previous state vector (lossy — prefer quoting the notebook / last turn when they disagree):\n${previousSummary.trim()}\n\n`
     : "";
+  const hasNotebook = Boolean(microLedger?.trim());
   const seedBlock = seed?.trim()
-    ? `Workspace seed (MEMORY.md / latest handoff — prefer this over tool chips):\n${seed.trim()}\n\n`
+    ? hasNotebook
+      ? `Durable MEMORY.md / handoff (constraints only if still clearly relevant — do NOT copy old dogfood canaries or Verified facts from here when the notebook below contradicts or covers the task):\n${seed.trim()}\n\n`
+      : `Workspace seed (MEMORY.md / latest handoff — prefer this over tool chips):\n${seed.trim()}\n\n`
     : "";
-  const notebook = microLedger?.trim()
-    ? `Running notebook (micro state vectors since last refresh — prefer these over silence for early facts):\n${microLedger.trim()}\n\n` +
+  const notebook = hasNotebook
+    ? `PRIMARY TRUTH — Running notebook (micro state vectors since last refresh):\n${microLedger!.trim()}\n\n` +
+      "Truth sources: this notebook + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
       "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n\n"
     : "";
+  const userBit = lastTurn?.userText?.trim() ?? "";
+  const asstBit = lastTurn?.assistantText?.trim() ?? "";
+  const lastTurnBlock =
+    userBit || asstBit
+      ? "Last turn (live truth — quote; do not invent):\n" +
+        [userBit ? `User: ${stubBulkPadText(userBit)}` : "", asstBit ? `Assistant: ${stubBulkPadText(asstBit)}` : ""]
+          .filter(Boolean)
+          .join("\n\n") +
+        "\n\n"
+      : "";
+  // When a notebook is present, last turn + notebook are the transcript inputs.
+  const transcriptBlock = hasNotebook
+    ? lastTurnBlock || (`Transcript (tool chips omitted):\n${body}`)
+    : `${lastTurnBlock}Transcript (tool chips omitted):\n${body}`;
   return (
     `${extractionPrompt}\n\n` +
     `Token budget for the output: ${maxTokens}.\n\n` +
     seedBlock +
     prior +
     notebook +
-    "Transcript (tool chips omitted):\n" +
-    body
+    transcriptBlock
   );
 }
 
@@ -751,6 +774,8 @@ export async function compactSession(input: {
   summarize?: (prompt: string) => Promise<string>;
   /** Optional running notebook from micro-vectors ledger (since last compact). */
   microLedger?: string;
+  /** Latest assistant visible reply on the compacting turn (with userText = last turn). */
+  lastAssistantText?: string;
 }): Promise<{ summary: string; turnText: string }> {
   const maxTokens = Math.max(256, input.maxTokens);
   const parts =
@@ -777,7 +802,8 @@ export async function compactSession(input: {
     Boolean(handoff) && (looksLikeHandoff(handoff) || handoff.length >= HANDOFF_AS_VECTOR_MIN_CHARS);
   // Distill a disk handoff into the six-heading page. Never smear the chat over it,
   // and never glue MEMORY.md's dead 0x… list onto Addresses.
-  if (diskHandoff && !input.summarize) {
+  // Notebook-on: always fold via the LLM summarizer path — do not short-circuit to disk handoff.
+  if (diskHandoff && !input.summarize && !input.microLedger?.trim()) {
     const extraction = input.extractionPrompt?.trim() || DEFAULT_EXTRACTION_PROMPT;
     const memoryOnly = seed === handoff ? "" : seed.replace(handoff, "").trim();
     let distilled = "";
@@ -811,6 +837,7 @@ export async function compactSession(input: {
     maxTokens,
     seed,
     input.microLedger,
+    { userText: input.userText, assistantText: input.lastAssistantText },
   );
   let raw = "";
   if (input.summarize) {
@@ -837,8 +864,8 @@ export async function compactSession(input: {
       raw = "";
     }
   }
-  if (!raw) raw = extractiveFallback(clipped, input.previousSummary, maxTokens, seed);
-  let summary = sanitizeVector(raw, maxTokens) || extractiveFallback(clipped, input.previousSummary, maxTokens, seed);
+  if (!raw) raw = extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
+  let summary = sanitizeVector(raw, maxTokens) || extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
   summary = mergeHarvestedAddresses(summary, harvested);
   summary = mergeWorkPointers(summary, pointers);
   summary = stripSecretLines(summary);

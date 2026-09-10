@@ -227,8 +227,9 @@ import {
 import { archiveStateVector } from "./vector-archive.ts";
 import {
   appendMicroVector,
-  buildMicroEntryFromExchange,
+  buildMicroNotebookPrompt,
   markMicroCompacted,
+  parseMicroNotebookResult,
   readMicroLedger,
 } from "./micro-vectors.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
@@ -2349,6 +2350,10 @@ function requestBehavior(value: unknown): "allow" | "deny" | "answer" | null {
 // the last settled assistant text per thread, so a "finished" notification
 // can carry what the bot actually said
 const lastReply = new Map<string, string>();
+/** Log once when micro vectors are on but the provider lacks generateText. */
+let warnedMicroNoGenerateText = false;
+const MICRO_NOTEBOOK_TIMEOUT_MS = 75_000;
+
 
 /** Put a notification on the wire. Clients decide what to do with it — a
  * desktop notification now, a push to a paired phone later. */
@@ -3371,22 +3376,52 @@ bus.subscribe((event: RuntimeEvent) => {
           if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
           else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
-        // Opt-in micro notebook: one heuristic note per settled user+assistant exchange.
-        if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg)) {
-          const path = store.activePath(event.threadId);
-          const lastUser = [...path].reverse().find((m) => m.role === "user" && m.kind === "text");
-          const entry = buildMicroEntryFromExchange({
-            userText: lastUser?.text,
-            assistantText: reply,
-          });
-          if (entry) {
+        // Opt-in micro notebook: side LLM reads the assistant's visible reply only.
+        // Truth is LLM intelligence — never fall back to heuristic extractors.
+        // Fire-and-forget (this bus handler is sync); timeout + swallow so the UI never blocks.
+        if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg) && reply.trim()) {
+          const instance = registry.get(bot.modelSelection.instanceId);
+          if (!instance?.generateText) {
+            if (!warnedMicroNoGenerateText) {
+              warnedMicroNoGenerateText = true;
+              console.warn(
+                "micro vectors: provider has no generateText — skipping notebook write (no heuristic fallback)",
+              );
+            }
+          } else {
             const taskRec = store.taskByThread(bot.id, event.threadId);
-            appendMicroVector({
-              botId: bot.id,
-              threadId: event.threadId,
-              taskTitle: taskRec?.title,
-              entry,
-            });
+            const botId = bot.id;
+            const threadId = event.threadId;
+            const replyForMicro = reply;
+            const generateText = instance.generateText.bind(instance);
+            void (async () => {
+              try {
+                const prompt = buildMicroNotebookPrompt(replyForMicro);
+                const raw = await Promise.race([
+                  generateText(prompt),
+                  new Promise<string>((_resolve, reject) => {
+                    const timer = setTimeout(
+                      () => reject(new Error("micro notebook timeout")),
+                      MICRO_NOTEBOOK_TIMEOUT_MS,
+                    );
+                    timer.unref?.();
+                  }),
+                ]);
+                const entry = parseMicroNotebookResult(raw, {
+                  sourceTurnChars: replyForMicro.length,
+                });
+                if (entry) {
+                  appendMicroVector({
+                    botId,
+                    threadId,
+                    taskTitle: taskRec?.title,
+                    entry,
+                  });
+                }
+              } catch {
+                /* never throw into the bus — disk/LLM failures are soft */
+              }
+            })();
           }
         }
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
@@ -4605,6 +4640,8 @@ async function startTurn(
       if (compactThisTurn) {
         const microLedger =
           microVectorsEnabled(cfg) ? readMicroLedger(bot.id, threadId) : "";
+        const lastAssistantText =
+          [...transcript].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
         const result = await compactSession({
           transcript: facing.lastCompaction
             ? [{ role: "assistant", text: facing.lastCompaction.summary }, ...transcript]
@@ -4624,6 +4661,7 @@ async function startTurn(
           }),
           workingCwd: existingDirectory(task.cwd) ?? existingDirectory(bot.cwd),
           ...(microLedger ? { microLedger } : {}),
+          ...(lastAssistantText ? { lastAssistantText } : {}),
         });
         if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
           throw new DirectTurnSetupCancelled("turn stopped during compaction");

@@ -1,6 +1,10 @@
-// Per-task micro state vectors: cheap append-only notes between Keep chatting
+// Per-task micro state vectors: LLM notebook pages between Keep chatting
 // compact cycles. Opt-in via compaction.microVectorsEnabled. Writers never
 // throw — a disk hiccup must not fail a turn or a compact.
+//
+// Product rule: all state-vector truth is LLM intelligence, not scripts.
+// The harness only decides when to fire, I/O's the ledger, and calls
+// generateText on the assistant's visible reply. No regex/heuristic truth.
 //
 // Layout (under each bot workspace via workspaceDir):
 //   workspaces/<botId>/tasks/<threadId>/meta.json
@@ -18,7 +22,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { harvestAddresses, isBulkPadText, stubBulkPadText } from "./context-compact.ts";
 import { workspaceDir } from "./workspace.ts";
 
 export const TASKS_DIRNAME = "tasks";
@@ -26,22 +29,22 @@ export const MICRO_VECTORS_DIRNAME = "micro-vectors";
 export const LEDGER_FILENAME = "ledger.jsonl";
 export const META_FILENAME = "meta.json";
 
-/** Cap a single ledger line's note/goal fields. */
-const FIELD_MAX = 240;
-const FACT_MAX = 6;
-const ADDR_MAX = 12;
-const PATH_MAX = 8;
+/** Clip absurdly long assistant replies before the side LLM call. */
+export const MICRO_REPLY_CLIP_CHARS = 12_000;
 const DEFAULT_READ_CHARS = 12_000;
 
 export type MicroVectorEntry = {
   at: string;
   role: "user" | "assistant";
+  /** Full LLM markdown notebook page (preferred). */
+  vector?: string;
   goal?: string;
   facts?: string[];
   addresses?: string[];
   landmines?: string[];
   constraints?: string[];
   next?: string;
+  /** Legacy/full markdown page when `vector` is unset. */
   note?: string;
   sourceTurnChars?: number;
   /** Boundary written after a successful compact; readers skip lines before the last one. */
@@ -123,129 +126,48 @@ function writeTaskMeta(
   }
 }
 
-function clipField(text: string | undefined, max = FIELD_MAX): string | undefined {
-  const t = text?.replace(/\s+/g, " ").trim();
-  if (!t) return undefined;
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
-}
-
-function uniqCap(items: string[], max: number): string[] | undefined {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of items) {
-    const t = raw.replace(/\s+/g, " ").trim();
-    if (!t || t.length > 200) continue;
-    const key = t.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
-    if (out.length >= max) break;
-  }
-  return out.length ? out : undefined;
-}
-
-const PATH_RE =
-  /(?<![A-Za-z0-9_])((?:~\/|\/|[A-Za-z]:[\\/])?(?:[\w.-]+[\\/])+[\w.-]+\.[A-Za-z][\w.-]*)/g;
-const BARE_PATH_RE =
-  /(?<![A-Za-z0-9_./])([\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|md|json|yml|yaml|toml|css|html|sh))(?![A-Za-z0-9_])/gi;
-const LANDMINE_RE =
-  /\b(?:don'?t|do not|never|avoid|warning|landmine|gotcha|pitfall|must not)\b[^.!?\n]{0,120}/gi;
-const CONSTRAINT_RE =
-  /\b(?:must|only|require[sd]?|constraint|cannot|can'?t|no\s+(?:network|internet|sudo))\b[^.!?\n]{0,100}/gi;
-
-function harvestPaths(text: string): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (raw: string) => {
-    const p = raw.trim();
-    if (!p || p.length > 180) return;
-    const key = p.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push(p);
-  };
-  for (const m of text.matchAll(PATH_RE)) add(m[1]!);
-  for (const m of text.matchAll(BARE_PATH_RE)) add(m[1]!);
-  return out.slice(0, PATH_MAX);
-}
-
-function harvestSnippets(re: RegExp, text: string, max: number): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(re)) {
-    const t = m[0]!.replace(/\s+/g, " ").trim();
-    if (t.length < 8) continue;
-    out.push(t.length > FIELD_MAX ? `${t.slice(0, FIELD_MAX - 1)}…` : t);
-    if (out.length >= max) break;
-  }
-  return out;
+/**
+ * Side-LLM prompt: assistant visible reply only → markdown micro notebook page.
+ * Truth comes from the reply; do not invent; ignore leaked tool chips.
+ */
+export function buildMicroNotebookPrompt(assistantReply: string): string {
+  const clipped =
+    assistantReply.length > MICRO_REPLY_CLIP_CHARS
+      ? `${assistantReply.slice(0, MICRO_REPLY_CLIP_CHARS)}\n…[clipped]`
+      : assistantReply;
+  return (
+    "Extract a compact micro state-vector notebook page from the assistant's visible chat reply below.\n" +
+    "Use these headings exactly (markdown):\n" +
+    "Goal\nVerified facts\nAddresses\nLandmines\nConstraints\nNext action\n" +
+    "Rules:\n" +
+    "- Quote verbatim from the reply. Do not invent facts, paths, ids, or next steps.\n" +
+    "- If the reply does not state a section, write (none) or omit detail — never guess.\n" +
+    "- Ignore [tool …] chips or tool telemetry if any leaked into the reply text.\n" +
+    "- Keep each section short (a few lines). No bulk UNIQUE/pad hex.\n" +
+    "- Output only the markdown page, no preamble.\n\n" +
+    "Assistant reply:\n" +
+    clipped
+  );
 }
 
 /**
- * Heuristic micro note from the latest user (+ optional assistant prose).
- * Skips empty / pad-only turns. Never calls an LLM.
+ * Turn a side-LLM notebook response into a ledger entry.
+ * Stores the markdown page in `vector` (full page). Returns null if empty/useless.
  */
-export function buildMicroEntryFromExchange(input: {
-  userText?: string;
-  assistantText?: string;
-  at?: Date;
-}): MicroVectorEntry | null {
-  const userRaw = input.userText?.trim() ?? "";
-  const asstRaw = input.assistantText?.trim() ?? "";
-  if (!userRaw && !asstRaw) return null;
-  if (userRaw && isBulkPadText(userRaw) && (!asstRaw || isBulkPadText(asstRaw))) return null;
-
-  const user = userRaw ? stubBulkPadText(userRaw) : "";
-  const asst = asstRaw && !isBulkPadText(asstRaw) ? asstRaw : asstRaw ? stubBulkPadText(asstRaw) : "";
-  const blob = [user, asst].filter(Boolean).join("\n");
-  if (!blob.trim()) return null;
-
-  const addresses = uniqCap(harvestAddresses(blob), ADDR_MAX);
-  const pathFacts = harvestPaths(blob).map((p) => `path: ${p}`);
-  const factLines: string[] = [...pathFacts];
-  if (asst) {
-    const sentence = asst
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.replace(/\s+/g, " ").trim())
-      .find((s) => s.length > 20 && s.length < 200 && !/^#{1,6}\s/.test(s));
-    if (sentence) factLines.push(sentence);
-  }
-  const facts = uniqCap(factLines, FACT_MAX);
-  const landmines = uniqCap(harvestSnippets(LANDMINE_RE, blob, 4), 4);
-  const constraints = uniqCap(harvestSnippets(CONSTRAINT_RE, blob, 4), 4);
-
-  const goal = user
-    ? clipField(user.split(/\n/).find((l) => l.trim()) ?? user, FIELD_MAX)
-    : undefined;
-  const next = asst
-    ? clipField(
-        asst
-          .split(/\n/)
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .at(-1),
-        FIELD_MAX,
-      )
-    : undefined;
-
-  const entry: MicroVectorEntry = {
-    at: (input.at ?? new Date()).toISOString(),
-    role: user ? "user" : "assistant",
-    ...(goal ? { goal } : {}),
-    ...(facts ? { facts } : {}),
-    ...(addresses ? { addresses } : {}),
-    ...(landmines ? { landmines } : {}),
-    ...(constraints ? { constraints } : {}),
-    ...(next && next !== goal ? { next } : {}),
-    sourceTurnChars: (userRaw.length || 0) + (asstRaw.length || 0),
+export function parseMicroNotebookResult(
+  raw: string | null | undefined,
+  opts?: { at?: Date; sourceTurnChars?: number },
+): MicroVectorEntry | null {
+  const text = raw?.trim() ?? "";
+  if (!text) return null;
+  // Refuse pure refusals / empty shells with no substance.
+  if (text.length < 8) return null;
+  return {
+    at: (opts?.at ?? new Date()).toISOString(),
+    role: "assistant",
+    vector: text,
+    ...(typeof opts?.sourceTurnChars === "number" ? { sourceTurnChars: opts.sourceTurnChars } : {}),
   };
-
-  // Drop empty shells (only at/role/sourceTurnChars).
-  if (!entry.goal && !entry.facts && !entry.addresses && !entry.landmines && !entry.constraints && !entry.next) {
-    const note = clipField(user || asst, FIELD_MAX);
-    if (!note) return null;
-    entry.note = note;
-  }
-  return entry;
 }
 
 /** Append one micro note. Never throws. Returns ledger path or null. */
@@ -303,8 +225,13 @@ function parseLedgerLines(raw: string): MicroVectorEntry[] {
   return out;
 }
 
+/** Format one ledger entry for the compact LLM prompt. */
 function formatEntry(entry: MicroVectorEntry): string {
   if (entry.compacted) return "";
+  const page = entry.vector?.trim() || entry.note?.trim();
+  if (page && (entry.vector || /^(Goal|Verified facts|Addresses|Landmines|Constraints|Next action)\b/m.test(page))) {
+    return `[${entry.at}] ${entry.role} notebook\n${page}`;
+  }
   const bits: string[] = [];
   bits.push(`[${entry.at}] ${entry.role}`);
   if (entry.goal) bits.push(`Goal: ${entry.goal}`);
