@@ -56,10 +56,10 @@ export function isLocalInjectModelId(modelId: string | null | undefined): boolea
   return (LOCAL_INJECT_HOST_IDS as readonly string[]).includes(host);
 }
 
-/** Default rewrite instructions. Editable in App Settings → Engines. Code still
+/** Default rewrite instructions. Editable in App Settings → Experimental. Code still
  * never clips Open/Next and never smears chat over a disk handoff. */
 export const DEFAULT_EXTRACTION_PROMPT =
-  "Write a one-page recap a successor can continue from without the transcript. " +
+  "Write a recap a successor can continue from without the transcript. Use the headings below as a template — include everything needed to hand off cleanly; do not artificially shorten or cap length for “one page.” Nitpick what matters from the notebook and turns; omit fluff. " +
   "Prefer these headings when they have content:\nGoal\nThis turn\nVerified facts\nAddresses\nLandmines\nConstraints\nOpen\n" +
   "Omit empty sections entirely — never write (none), (not stated), or filler placeholders. " +
   "This turn: include when useful — the last move that mattered (short). " +
@@ -75,6 +75,6 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "Without a notebook, prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +
   "MEMORY.md is for durable constraints still clearly relevant; never copy old markers from durable notes when the notebook contradicts or covers the task. " +
   "The latest user message is live truth — quote it; do not replace it with an older Goal from seed. " +
-  "This page must work for any local task (code, research, ops), not one domain. " +
+  "This recap must work for any local task (code, research, ops), not one domain. " +
   "Ignore [tool …] chips. Quote verbatim. Do not invent. Do not invent the next patch or feature.";
 
