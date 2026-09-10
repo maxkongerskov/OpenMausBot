@@ -62,6 +62,10 @@ describe("LLM notebook prompt + sanitize", () => {
     });
     expect(prompt).toMatch(/Harvest a rich turn page/i);
     expect(prompt).toContain("This turn");
+    expect(prompt).toContain("Open");
+    expect(prompt.toLowerCase()).toMatch(/this turn is required/);
+    expect(prompt.toLowerCase()).toMatch(/omit open if nothing is open/);
+    expect(prompt.toLowerCase()).toMatch(/never soft-park/);
     expect(prompt).toContain("Prior notebook (context only");
     expect(prompt).toMatch(/Do NOT rewrite/i);
     expect(prompt).toContain("Fix store");
@@ -73,7 +77,7 @@ describe("LLM notebook prompt + sanitize", () => {
     expect(prompt.toLowerCase()).toContain("omit empty sections");
     expect(prompt.toLowerCase()).toContain("never write (none)");
     expect(prompt.toLowerCase()).toContain("do not invent");
-    expect(prompt.toLowerCase()).toMatch(/never confirm\/verify\/search/);
+    expect(prompt.toLowerCase()).toMatch(/confirm\/verify\/search/);
     expect(prompt).toMatch(/Fill #N/);
   });
 
@@ -84,7 +88,7 @@ describe("LLM notebook prompt + sanitize", () => {
     expect(prompt).not.toContain("x".repeat(12_001));
   });
 
-  it("sanitizes Fill #N and banned Next on write", () => {
+  it("sanitizes Fill #N and banned Open/Next soft-park on write", () => {
     const page = [
       "Goal",
       "Fill #3 ship store fix",
@@ -99,7 +103,7 @@ describe("LLM notebook prompt + sanitize", () => {
     expect(cleaned).toBeTruthy();
     expect(cleaned!).not.toMatch(/Fill\s*#\s*3/i);
     expect(cleaned!.toLowerCase()).not.toMatch(/wait for next/);
-    expect(cleaned!.toLowerCase()).toContain("next action");
+    expect(cleaned!).toContain("Open");
     expect(cleaned!).toMatch(/run the store tests/i);
   });
 
