@@ -2353,7 +2353,7 @@ function requestBehavior(value: unknown): "allow" | "deny" | "answer" | null {
 const lastReply = new Map<string, string>();
 /** Log once when micro notebook side LLM (inject + generateText) both fail. */
 let warnedMicroSideLlmFail = false;
-const MICRO_NOTEBOOK_TIMEOUT_MS = 75_000;
+const MICRO_NOTEBOOK_TIMEOUT_MS = 120_000;
 
 
 /** Put a notification on the wire. Clients decide what to do with it — a
@@ -3398,7 +3398,7 @@ bus.subscribe((event: RuntimeEvent) => {
                   modelId,
                   prompt,
                   generateText,
-                  maxTokens: 1024,
+                  maxTokens: 4096,
                 }),
                 new Promise<string | null>((_resolve, reject) => {
                   const timer = setTimeout(
