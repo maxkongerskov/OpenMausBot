@@ -106,6 +106,19 @@ describe("sanitizeForwardOnlyVector", () => {
     expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("Next action");
   });
 
+  it("rewrites Open that soft-parks with await-the-next prompt", () => {
+    const summary = [
+      "Goal",
+      "ORBIT sheet",
+      "Open",
+      "The essay task is finished. The successor should await the next specific essay prompt or instruction.",
+    ].join("\n");
+    const cleaned = sanitizeForwardOnlyVector(summary, "Write the Magna Carta / Galileo essay next.");
+    expect(cleaned).toContain("Open");
+    expect(cleaned.toLowerCase()).not.toMatch(/await the next/);
+    expect(cleaned).toContain(forwardNextFromLiveAsk("Write the Magna Carta / Galileo essay next."));
+  });
+
   it("leaves a forward Open alone", () => {
     const summary = "Goal\nship\nOpen\nedit src/auth.ts";
     expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("Open\nedit src/auth.ts");
