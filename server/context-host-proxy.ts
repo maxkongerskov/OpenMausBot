@@ -73,7 +73,8 @@ export function rewriteOpenAIMessages(messages: ChatMessage[], vector: string, u
     const role = typeof message.role === "string" ? message.role : "";
     return role === "system" || role === "developer";
   });
-  const state: ChatMessage = { role: "user", content: `Current task state:\n\n${vector.trim()}` };
+  // Bare vector — no "Current task state" framing (models echo/narrate it).
+  const state: ChatMessage = { role: "user", content: vector.trim() };
   const needle = userText.trim();
   let start = -1;
   if (needle) {

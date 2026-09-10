@@ -1,6 +1,6 @@
 // Session compaction: a separate summarizer call, then a brand-new native
 // session whose first prompt is the state vector. The local model is not
-// told it restarted — the vector is framed as current task state.
+// told it restarted — inject the bare vector (no "task state" / restart framing).
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -88,7 +88,10 @@ export function injectStateVector(summary: string, userText: string): string {
   const state = summary.trim();
   // Stub bulk pads first so canaries/paths survive; then soft-cap for the provider.
   const latest = clipCompactUserText(stubBulkPadText(userText));
-  return ["Current task state:", "", state, "", latest].join("\n");
+  // Bare vector + live user text — no "Current task state" / restart / instructions
+  // framing (models echo that and narrate the recycle).
+  if (!latest) return state;
+  return [state, "", latest].join("\n");
 }
 
 export function resolveOutgoingTurn(input: {
@@ -669,7 +672,8 @@ function buildSummarizerPrompt(
   const notebook = hasNotebook
     ? `PRIMARY TRUTH — Running notebook (micro state vectors since last refresh):\n${microLedger!.trim()}\n\n` +
       "Truth sources: this notebook + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
-      "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n\n"
+      "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n" +
+      "Next action must be exactly one forward concrete step the successor should do for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or meta about a missing transcript.\n\n"
     : "";
   const userBit = lastTurn?.userText?.trim() ?? "";
   const asstBit = lastTurn?.assistantText?.trim() ?? "";

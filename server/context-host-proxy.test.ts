@@ -23,7 +23,7 @@ describe("rewriteOpenAIMessages", () => {
     expect(rewritten[0]).toEqual({ role: "system", content: "You are Wren." });
     expect(rewritten[1]).toEqual({
       role: "user",
-      content: "Current task state:\n\nGoal\nopen /secret/vault",
+      content: "Goal\nopen /secret/vault",
     });
     expect(rewritten.at(-1)).toEqual({ role: "user", content: "what is the vault path?" });
     expect(rewritten.some((m) => String(m.content).includes("billing"))).toBe(false);
@@ -79,7 +79,8 @@ describe("rewriteOpenAIMessages", () => {
     ];
     const rewritten = rewriteOpenAIMessages(messages, "Goal\nkeep chatting", pad);
     const userTurns = rewritten.filter((m) => m.role === "user").map((m) => String(m.content));
-    expect(userTurns[0]).toContain("Current task state:");
+    expect(userTurns[0]).toBe("Goal\nkeep chatting");
+    expect(userTurns[0]).not.toMatch(/Current task state/i);
     expect(userTurns[1]!.length).toBeLessThan(2_000);
     expect(userTurns[1]).toMatch(/bulk paste omitted|clipped for refreshed context|GO4 UNIQUE-GO4/);
     expect(userTurns[1]).toContain("CANARY_LIVE072_C495");
@@ -104,7 +105,8 @@ describe("rewriteOpenAIMessages", () => {
     const rewritten = rewriteOpenAIMessages(messages, "Goal\nkeep chatting", compactTurn);
     const users = rewritten.filter((m) => m.role === "user").map((m) => String(m.content));
     // state + clipped compact turn + full later pad
-    expect(users[0]).toContain("Current task state:");
+    expect(users[0]).toBe("Goal\nkeep chatting");
+    expect(users[0]).not.toMatch(/Current task state/i);
     expect(users[1]!.length).toBeLessThan(2_000);
     expect(users[1]).toMatch(/bulk paste omitted|clipped for refreshed context/);
     expect(users.at(-1)).toBe(laterPad);
@@ -187,7 +189,7 @@ describe("HostProxy", () => {
       }),
     });
     expect(response.ok).toBe(true);
-    expect(seen.messages?.map((m) => m.content)).toEqual(["Current task state:\n\nGoal\nvault", "continue"]);
+    expect(seen.messages?.map((m) => m.content)).toEqual(["Goal\nvault", "continue"]);
     expect(seen.messages?.some((m) => m.content === "ancient history")).toBe(false);
     await proxy.close();
   });

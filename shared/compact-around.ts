@@ -65,7 +65,10 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "Addresses: live file paths, symbols, IDs, and 0x… values, one per line — omit disproven ones. " +
   "Landmines: what would destroy work if forgotten. " +
   "Constraints: never-do rules. " +
-  "Next action: exactly one concrete step, complete, last section, never truncated. " +
+  "Next action: exactly one forward concrete step the successor should do for the user, complete, last section, never truncated. " +
+  "Never set Next action to confirm/verify/search for a previous chat turn, an essay from last turn, that you do not see it in history, or any meta about a missing transcript. " +
+  "Do not put harness/dogfood labels like Fill #N into Constraints. " +
+  "Do not mention compaction, recycling, or a refreshed session. " +
   "Drop long recipes, logs, UNIQUE/pad blobs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). Keep short canaries, paths, and ids — never paste bulk hex. " +
   "When a running notebook (micro state vectors) is present, that notebook plus the last turn are the truth sources for Verified facts / Goal / Addresses / Next — do not promote unrelated MEMORY.md dogfood canaries into Verified facts. " +
   "Without a notebook, prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +

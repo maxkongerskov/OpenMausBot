@@ -55,6 +55,8 @@ describe("LLM notebook prompt + parse", () => {
     expect(prompt).toContain("Verified facts");
     expect(prompt.toLowerCase()).toContain("do not invent");
     expect(prompt.toLowerCase()).toContain("ignore");
+    expect(prompt.toLowerCase()).toMatch(/never confirm\/verify\/search/);
+    expect(prompt).toMatch(/Fill #N/);
     expect(prompt).not.toMatch(/\buser\b.*Fix the bug/i);
   });
 

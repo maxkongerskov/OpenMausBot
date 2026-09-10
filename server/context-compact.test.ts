@@ -15,6 +15,7 @@ import {
   harvestAddresses,
   harvestWorkPointers,
   HANDOFF_AS_VECTOR_MIN_CHARS,
+  DEFAULT_EXTRACTION_PROMPT,
   injectStateVector,
   isBulkPadText,
   mergeLiveUser,
@@ -43,12 +44,20 @@ const transcript: FacingTurn[] = [
 ];
 
 describe("injectStateVector", () => {
-  it("frames current state without telling the model it restarted", () => {
+  it("injects bare vector + live user text without restart/task-state framing", () => {
     const text = injectStateVector("Goal\nfix login\nNext action\nedit src/auth.ts", "what is left?");
-    expect(text).toContain("Current task state:");
+    expect(text).toBe("Goal\nfix login\nNext action\nedit src/auth.ts\n\nwhat is left?");
     expect(text).toContain("Goal\nfix login");
     expect(text.endsWith("what is left?")).toBe(true);
-    expect(text.toLowerCase()).not.toMatch(/restart|joining this conversation|rewound|session\/new|compacted/);
+    expect(text.toLowerCase()).not.toMatch(
+      /current task state|task state|you are reading|instructions|restart|joining this conversation|rewound|session\/new|compacted/,
+    );
+  });
+
+  it("DEFAULT_EXTRACTION_PROMPT forbids confirm-previous-turn Next action", () => {
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/never set next action to confirm/);
+    expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/Fill #N/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/forward concrete step/);
   });
 });
 
@@ -86,7 +95,8 @@ describe("bulk pad demotion", () => {
 
   it("clips giant live user text in injectStateVector", () => {
     const text = injectStateVector("Goal\nkeep chatting\nNext action\ncontinue", pad);
-    expect(text).toContain("Current task state:");
+    expect(text).not.toMatch(/Current task state/i);
+    expect(text.startsWith("Goal\nkeep chatting")).toBe(true);
     expect(text).toContain("CANARY_PAD_9F1A");
     expect(text.length).toBeLessThan(2_500);
     expect(text).not.toContain("deadbeef".repeat(20));
@@ -145,7 +155,8 @@ describe("compactSession", () => {
       },
     });
     expect(result.summary).toContain("/auth/callback");
-    expect(result.turnText).toContain("Current task state:");
+    expect(result.turnText).not.toMatch(/Current task state/i);
+    expect(result.turnText.startsWith("Goal\nfix login redirect")).toBe(true);
     expect(result.turnText.endsWith("keep going")).toBe(true);
   });
 
@@ -681,6 +692,7 @@ describe("micro notebook compact priority", () => {
     expect(seen).toContain("LIVE_TURN_9A");
     expect(seen).toContain("Patched store.ts");
     expect(seen).toMatch(/do NOT copy old dogfood canaries/i);
+    expect(seen.toLowerCase()).toMatch(/never confirm\/verify\/search for a previous chat turn/);
     expect(seen).not.toContain("Transcript (tool chips omitted)");
     expect(result.summary).toContain("0xDeadBeef01");
     expect(result.summary).toContain("LIVE_TURN_9A");
