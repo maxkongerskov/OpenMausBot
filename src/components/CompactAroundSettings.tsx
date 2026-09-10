@@ -141,7 +141,7 @@ export function CompactAroundSettings() {
           {envOverride !== null
             ? `A computer setting is overriding this (${formatTokenK(envOverride)}).`
             : aroundOff
-              ? "Keep chatting is off. Local chats will not recycle with a state vector."
+              ? "Keep chatting is off. Local chats will not refresh with a recap."
               : aroundAuto
                 ? "Auto refreshes at a comfortable size for most computers."
                 : `Refreshes around ${fireOf(compactAround!)}. This chat stays; a line appears in the thread.`}
@@ -229,7 +229,7 @@ export function CompactAroundSettings() {
           }}
         />
         <div className="flex items-start justify-between gap-3 text-[11px] text-ink-secondary">
-          <span>Standard recap: goal, facts, places, cautions, and the next step.</span>
+          <span>Standard recap: goal, this turn, facts, places, cautions, constraints, and what is still open.</span>
           <span className="shrink-0 tabular-nums">
             {promptDraft.length.toLocaleString()} / {VECTOR_PROMPT_MAX.toLocaleString()}
           </span>
@@ -241,8 +241,8 @@ export function CompactAroundSettings() {
           <div>
             <div className="text-[13px] font-medium text-ink">Build a running notebook</div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-              Cheap per-turn rolling notebook under each bot/task so the next refresh keeps early truths. Off by
-              default. Default path: {'…/workspaces/<bot>/tasks/<task>/notebook.md'}
+              After each turn, update a short notebook for this chat so the next refresh keeps early truths. Off by
+              default. Saved under each bot&apos;s task folder as notebook.md.
             </p>
           </div>
           <Switch
