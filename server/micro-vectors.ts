@@ -109,6 +109,18 @@ function clipText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)}\n…[clipped]`;
 }
+/** Keep the newest suffix when a live notebook exceeds maxChars. */
+function clipNotebookNewest(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  let clipped = text.slice(-maxChars);
+  const sep = `\n\n${TURN_PAGE_SEPARATOR}\n\n`;
+  const idx = clipped.indexOf(sep);
+  if (idx >= 0 && idx + sep.length < clipped.length) {
+    clipped = clipped.slice(idx + sep.length);
+  }
+  return clipped;
+}
+
 
 /** Ensure tasks/<thread>/ exists (and micro-vectors/ for thin ledger). Returns task dir or null. */
 export function ensureTaskMicroDir(
@@ -561,7 +573,7 @@ export function readTaskNotebook(
       const text = readFileSync(path, "utf8").trim();
       if (text) {
         const maxChars = opts?.maxChars ?? DEFAULT_READ_CHARS;
-        return text.length > maxChars ? text.slice(0, maxChars) : text;
+        return clipNotebookNewest(text, maxChars);
       }
     }
     if (opts?.seedFromLedger === false) return "";
@@ -575,7 +587,7 @@ export function readTaskNotebook(
       /* still return seeded even if write fails */
     }
     const maxChars = opts?.maxChars ?? DEFAULT_READ_CHARS;
-    return seeded.length > maxChars ? seeded.slice(0, maxChars) : seeded;
+    return clipNotebookNewest(seeded, maxChars);
   } catch {
     return "";
   }
