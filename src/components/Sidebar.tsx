@@ -922,7 +922,13 @@ export function BotListItem({
     onMenu({ botId: bot.id, x: event.clientX, y: event.clientY });
   };
   const onSelect = (event: React.MouseEvent) => {
+
     if (renaming) return;
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      event.preventDefault();
+      return;
+    }
     const insideRenameInput = event.target instanceof HTMLInputElement;
     if (botListItemPointerIntent(event.type, insideRenameInput, Boolean(reorder?.dragging)) === "select") {
       dispatch({ type: "select", id: bot.id });
@@ -1017,8 +1023,10 @@ export function BotListItem({
           editing state, and leaves the row stuck in rename mode. Omitting
           role=button also keeps the input visible to assistive technology. */}
       <div
-        role={renaming ? undefined : "button"}
-        tabIndex={renaming ? undefined : 0}
+
+        ref={rowRef}
+        role={renaming || floating ? undefined : "button"}
+        tabIndex={renaming || floating ? undefined : 0}
         aria-label={
           !renaming && iconOnly
             ? deleting
@@ -1027,6 +1035,8 @@ export function BotListItem({
             : undefined
         }
         aria-busy={deleting || undefined}
+        aria-grabbed={reorder?.dragging && !floating ? true : undefined}
+        aria-keyshortcuts={reorder?.enabled && !floating ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
         data-sidebar-bot-row={bot.id}
         data-sidebar-bot-section={reorder?.sectionId}
         data-sidebar-bot-float={floating ? "true" : undefined}
@@ -1852,8 +1862,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               bot={floatingBot}
               density={density}
               onMenu={() => {}}
-              onArchive={() => {}}
-              archiveDisabled
               floating
             />
           </div>,

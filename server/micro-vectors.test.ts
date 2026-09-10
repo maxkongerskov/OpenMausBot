@@ -194,6 +194,23 @@ describe("write + read notebook.md", () => {
     expect(readFileSync(notebookPath("b1", "t1", base), "utf8")).toContain("legacy goal");
   });
 
+  it("keeps the newest notebook pages when truncating maxChars", () => {
+    const base = tmp();
+    const sep = `\n\n${TURN_PAGE_SEPARATOR}\n\n`;
+    const oldPage = "Goal\nold page that should drop\nNext action\nignore";
+    const newPage = "Goal\nnewest page keep me\nNext action\ncontinue";
+    writeTaskNotebook({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: `${oldPage}${sep}${newPage}`,
+      appendLedger: false,
+    });
+    const blob = readTaskNotebook("b1", "t1", { baseDir: base, maxChars: newPage.length + 8 });
+    expect(blob).toContain("newest page keep me");
+    expect(blob).not.toContain("old page that should drop");
+  });
+
   it("prefers notebook.md over ledger when both exist", () => {
     const base = tmp();
     writeTaskNotebook({
