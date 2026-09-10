@@ -144,6 +144,9 @@ export function buildMicroNotebookPrompt(assistantReply: string): string {
     "- If the reply does not state a section, write (none) or omit detail — never guess.\n" +
     "- Ignore [tool …] chips or tool telemetry if any leaked into the reply text.\n" +
     "- Keep each section short (a few lines). No bulk UNIQUE/pad hex.\n" +
+    "- Next action: exactly one forward concrete step for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or transcript meta.\n" +
+    "- Do not put harness/dogfood labels like Fill #N into Constraints.\n" +
+    "- Do not mention compaction, recycling, or a refreshed session.\n" +
     "- Output only the markdown page, no preamble.\n\n" +
     "Assistant reply:\n" +
     clipped
