@@ -729,6 +729,7 @@ describe("micro notebook compact priority", () => {
       },
     });
     expect(seen).toContain("PRIMARY TRUTH");
+    expect(seen).toMatch(/Fold the ENTIRE notebook stack/i);
     expect(seen).toContain("Fix store wipe");
     expect(seen).toContain("Last turn");
     expect(seen).toContain("LIVE_TURN_9A");

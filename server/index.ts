@@ -228,12 +228,14 @@ import {
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
 import {
+  appendTurnPage,
+  archiveAndSeedNotebook,
   awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   markMicroCompacted,
+  NOTEBOOK_STACK_READ_CHARS,
   readTaskNotebook,
   trackNotebookUpdate,
-  writeTaskNotebook,
 } from "./micro-vectors.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, vectorBudget } from "./context-rebuild.ts";
@@ -3379,11 +3381,9 @@ bus.subscribe((event: RuntimeEvent) => {
           if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
           else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
-        // Opt-in rolling notebook: side LLM gets prior notebook + user text + reply.
-        // Prefer local inject (bot selected model id) over provider generateText
-        // (e.g. grok instance's hardcoded grok-3-mini). No heuristic fallback.
-        // Fire-and-forget (this bus handler is sync); timeout + swallow so the UI never blocks.
-        // Compact awaits the in-flight write briefly so the last turn is not missing.
+        // Opt-in rolling notebook: side LLM harvests a rich turn page; APPEND to live
+        // notebook.md (never rewrite prior pages). Prefer local inject over provider
+        // generateText. Fire-and-forget; compact awaits the in-flight write briefly.
         if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg) && reply.trim()) {
           const instance = registry.get(bot.modelSelection.instanceId);
           const modelId =
@@ -3429,7 +3429,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 }
                 return;
               }
-              writeTaskNotebook({
+              appendTurnPage({
                 botId,
                 threadId,
                 text: raw,
@@ -4660,7 +4660,9 @@ async function startTurn(
           await awaitPendingNotebookUpdate(bot.id, threadId);
         }
         const microLedger =
-          microVectorsEnabled(cfg) ? readTaskNotebook(bot.id, threadId) : "";
+          microVectorsEnabled(cfg)
+            ? readTaskNotebook(bot.id, threadId, { maxChars: NOTEBOOK_STACK_READ_CHARS })
+            : "";
         const lastAssistantText =
           [...transcript].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
         const result = await compactSession({
@@ -4708,6 +4710,14 @@ async function startTurn(
         }
         if (microVectorsEnabled(cfg)) {
           markMicroCompacted({ botId: bot.id, threadId });
+          // Archive live stack → notebooks/session-NNN.md; seed live notebook.md with V.
+          archiveAndSeedNotebook({
+            botId: bot.id,
+            threadId,
+            seedText: result.summary,
+            userText: userPrompt,
+            taskTitle: task.title,
+          });
         }
         bindLocalHostRewrite({ threadId, modelId: model, vector: result.summary, userText: userPrompt });
         await hostProxy.ensureListening();
