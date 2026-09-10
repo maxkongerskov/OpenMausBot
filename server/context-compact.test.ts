@@ -741,16 +741,19 @@ describe("micro notebook compact priority", () => {
     expect(result.summary).toContain("LIVE_TURN_9A");
   });
 
-  it("extractive fallback uses notebook facts instead of MEMORY canaries when present", async () => {
+  it("uses notebook as truth when LLM absent — skips inventing via extractiveFallback/MEMORY", async () => {
     const result = await compactSession({
       transcript: [{ role: "user", text: "keep going on store" }],
       userText: "keep going on store",
       maxTokens: 512,
-      workspaceSeed: "Dogfood canary CANARY_LONGRUN_D4C1 must stay in MEMORY forever.",
+      workspaceSeed: "Dogfood canary CANARY_LONGRUN_D4C1 must stay in MEMORY forever. Also 0xMEMORYONLY99.",
       microLedger: "Goal\nFix store\nVerified facts\nstore.ts patched\nAddresses\nserver/store.ts\nNext action\nrun tests",
     });
     expect(result.summary).toContain("store.ts");
+    expect(result.summary).toContain("Fix store");
     expect(result.summary).not.toContain("CANARY_LONGRUN_D4C1");
+    // mergeHarvestedAddresses must not invent MEMORY-only hex into Addresses
+    expect(result.summary).not.toContain("0xMEMORYONLY99");
   });
 });
 

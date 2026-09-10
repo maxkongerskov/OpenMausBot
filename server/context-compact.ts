@@ -918,7 +918,7 @@ export async function compactSession(input: {
   workspaceSeed?: string;
   /** Tests inject a summarizer; production leaves this unset. */
   summarize?: (prompt: string) => Promise<string>;
-  /** Optional running notebook from micro-vectors ledger (since last compact). */
+  /** Optional rolling task notebook.md text (primary truth when non-empty). */
   microLedger?: string;
   /** Latest assistant visible reply on the compacting turn (with userText = last turn). */
   lastAssistantText?: string;
@@ -1005,9 +1005,22 @@ export async function compactSession(input: {
         fetchImpl: input.fetchImpl,
       })) ?? "";
   }
-  if (!raw) raw = extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
-  let summary = sanitizeVector(raw, maxTokens) || extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
-  summary = mergeHarvestedAddresses(summary, harvested);
+  const notebookPresent = Boolean(input.microLedger?.trim());
+  // When a rolling notebook is present, it is primary truth — do not invent via
+  // extractiveFallback / mergeHarvestedAddresses. Still demote pads in the prompt.
+  if (!raw) {
+    raw = notebookPresent
+      ? input.microLedger!.trim()
+      : extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
+  }
+  let summary =
+    sanitizeVector(raw, maxTokens) ||
+    (notebookPresent
+      ? input.microLedger!.trim()
+      : extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger));
+  if (!notebookPresent) {
+    summary = mergeHarvestedAddresses(summary, harvested);
+  }
   summary = mergeWorkPointers(summary, pointers);
   summary = stripSecretLines(summary);
   summary = clipKeepingNext(mergeLiveUser(summary, input.userText), maxTokens);

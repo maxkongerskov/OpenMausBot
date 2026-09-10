@@ -241,8 +241,8 @@ export function CompactAroundSettings() {
           <div>
             <div className="text-[13px] font-medium text-ink">Build a running notebook</div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-              Cheap per-turn micro notes under each bot/task so the next refresh keeps early truths. Off by
-              default. Default path: {'…/workspaces/<bot>/tasks/<task>/micro-vectors/.'}
+              Cheap per-turn rolling notebook under each bot/task so the next refresh keeps early truths. Off by
+              default. Default path: {'…/workspaces/<bot>/tasks/<task>/notebook.md'}
             </p>
           </div>
           <Switch

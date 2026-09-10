@@ -228,11 +228,12 @@ import {
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
 import {
-  appendMicroVector,
+  awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   markMicroCompacted,
-  parseMicroNotebookResult,
-  readMicroLedger,
+  readTaskNotebook,
+  trackNotebookUpdate,
+  writeTaskNotebook,
 } from "./micro-vectors.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, vectorBudget } from "./context-rebuild.ts";
@@ -3378,10 +3379,11 @@ bus.subscribe((event: RuntimeEvent) => {
           if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
           else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
-        // Opt-in micro notebook: side LLM reads the assistant's visible reply only.
+        // Opt-in rolling notebook: side LLM gets prior notebook + user text + reply.
         // Prefer local inject (bot selected model id) over provider generateText
         // (e.g. grok instance's hardcoded grok-3-mini). No heuristic fallback.
         // Fire-and-forget (this bus handler is sync); timeout + swallow so the UI never blocks.
+        // Compact awaits the in-flight write briefly so the last turn is not missing.
         if (!internal && compactionEnabled(cfg) && microVectorsEnabled(cfg) && reply.trim()) {
           const instance = registry.get(bot.modelSelection.instanceId);
           const modelId =
@@ -3391,9 +3393,18 @@ bus.subscribe((event: RuntimeEvent) => {
           const botId = bot.id;
           const threadId = event.threadId;
           const replyForMicro = reply;
-          void (async () => {
+          const lastUserMsg = [...store.messagesFor(event.threadId)]
+            .reverse()
+            .find((m) => m.role === "user" && m.kind === "text" && m.text?.trim());
+          const userTextForMicro = lastUserMsg?.text?.trim() ?? "";
+          const priorNotebook = readTaskNotebook(botId, threadId);
+          const update = (async () => {
             try {
-              const prompt = buildMicroNotebookPrompt(replyForMicro);
+              const prompt = buildMicroNotebookPrompt({
+                priorNotebook,
+                userText: userTextForMicro,
+                assistantReply: replyForMicro,
+              });
               const raw = await Promise.race([
                 generateSideText({
                   modelId,
@@ -3418,21 +3429,18 @@ bus.subscribe((event: RuntimeEvent) => {
                 }
                 return;
               }
-              const entry = parseMicroNotebookResult(raw, {
-                sourceTurnChars: replyForMicro.length,
+              writeTaskNotebook({
+                botId,
+                threadId,
+                text: raw,
+                userText: userTextForMicro,
+                taskTitle: taskRec?.title,
               });
-              if (entry) {
-                appendMicroVector({
-                  botId,
-                  threadId,
-                  taskTitle: taskRec?.title,
-                  entry,
-                });
-              }
             } catch {
               /* never throw into the bus — disk/LLM/timeout failures are soft */
             }
           })();
+          trackNotebookUpdate(botId, threadId, update);
         }
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
@@ -4648,8 +4656,11 @@ async function startTurn(
       });
       const priorRewrite = hostProxy.get(threadId);
       if (compactThisTurn) {
+        if (microVectorsEnabled(cfg)) {
+          await awaitPendingNotebookUpdate(bot.id, threadId);
+        }
         const microLedger =
-          microVectorsEnabled(cfg) ? readMicroLedger(bot.id, threadId) : "";
+          microVectorsEnabled(cfg) ? readTaskNotebook(bot.id, threadId) : "";
         const lastAssistantText =
           [...transcript].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
         const result = await compactSession({
