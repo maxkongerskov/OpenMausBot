@@ -17,11 +17,19 @@ export function forbiddenArchiveDir(dir: string): boolean {
   } catch {
     return true;
   }
-  const home = resolve(homedir());
-  if (resolved === "/" || resolved === home || /^[A-Za-z]:\\?$/.test(resolved)) return true;
-  const unix = resolved.replace(/\\/g, "/").toLowerCase();
-  if (unix === "/users" || unix === "/home" || unix === "/volumes") return true;
-  const first = unix.split("/").filter(Boolean)[0] ?? "";
+  // Normalize to posix-ish lower case so Windows drive letters and slash style
+  // do not bypass the same system-folder checks as Unix ("/Applications" → "D:\\Applications").
+  const asPosix = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const unix = asPosix(resolved);
+  const home = asPosix(resolve(homedir()));
+  // Unix root, Windows drive roots (C:), or the user's home directory itself.
+  if (unix === "/" || /^[a-z]:$/.test(unix) || unix === home) return true;
+  // Strip "d:" so "d:/applications" is checked like "/applications".
+  const segments = unix.replace(/^[a-z]:/, "").split("/").filter(Boolean);
+  if (segments.length === 0) return true;
+  // Exact top-level user/volume mounts — children like /Users/max/project stay allowed.
+  if (segments.length === 1 && ["users", "home", "volumes"].includes(segments[0]!)) return true;
+  const first = segments[0]!;
   return [
     "applications",
     "system",
@@ -33,6 +41,10 @@ export function forbiddenArchiveDir(dir: string): boolean {
     "cores",
     "opt",
     "library",
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
   ].includes(first);
 }
 
