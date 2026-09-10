@@ -739,6 +739,8 @@ describe("generateSideText", () => {
     expect(fetchBody).toMatchObject({
       model: "unsloth/gemma-4-26B-A4B-it-GGUF",
       messages: [{ role: "user", content: "extract notebook" }],
+      enable_thinking: false,
+      max_tokens: 512,
     });
   });
 
@@ -771,5 +773,66 @@ describe("generateSideText", () => {
     await expect(
       summarizeViaLocalHost("grok-3-mini", "prompt", 256, {}, fetch),
     ).resolves.toBeNull();
+  });
+
+  it("summarizeViaLocalHost returns null when content empty even if reasoning_content filled", async () => {
+    const modelId = "unsloth::unsloth/gemma-4-26B-A4B-it-GGUF";
+    let fetchBody: unknown;
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      fetchBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                reasoning_content: "I am thinking about the notebook…",
+              },
+              finish_reason: "length",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    await expect(
+      summarizeViaLocalHost(
+        modelId,
+        "extract notebook",
+        4096,
+        { UNSLOTH_STUDIO_AUTH_TOKEN: "test-token" },
+        fetchImpl,
+      ),
+    ).resolves.toBeNull();
+    expect(fetchBody).toMatchObject({
+      enable_thinking: false,
+      max_tokens: 4096,
+    });
+  });
+
+  it("summarizeViaLocalHost returns trimmed content when enable_thinking path yields prose", async () => {
+    const modelId = "unsloth::unsloth/gemma-4-26B-A4B-it-GGUF";
+    let fetchBody: unknown;
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      fetchBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "  Goal\nship fix\nNext action\ncontinue  " } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    await expect(
+      summarizeViaLocalHost(
+        modelId,
+        "extract notebook",
+        4096,
+        { UNSLOTH_STUDIO_AUTH_TOKEN: "test-token" },
+        fetchImpl,
+      ),
+    ).resolves.toBe("Goal\nship fix\nNext action\ncontinue");
+    expect(fetchBody).toMatchObject({ enable_thinking: false });
   });
 });

@@ -711,7 +711,9 @@ export async function summarizeViaLocalHost(
   const host = localHost(inject.host);
   if (!host) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  // Unsloth Gemma with larger max_tokens (e.g. micro at 4096) needs more wall time.
+  const timeoutMs = maxTokens >= 2048 ? 90_000 : 45_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   timer.unref?.();
   try {
     const response = await fetchImpl(`${host.baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -726,13 +728,18 @@ export async function summarizeViaLocalHost(
         messages: [{ role: "user", content: prompt }],
         max_tokens: maxTokens,
         temperature: 0,
+        // Unsloth Gemma often fills reasoning_content and leaves content empty when
+        // thinking is on and max_tokens is tight. Side vectors must be visible prose
+        // only (never reasoning_content), so disable thinking for this path.
+        enable_thinking: false,
       }),
     });
     if (!response.ok) return null;
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: unknown } }>;
+      choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>;
     };
     const content = payload.choices?.[0]?.message?.content;
+    // Intentionally ignore reasoning_content — Max forbids thoughts in vectors.
     return typeof content === "string" && content.trim() ? content.trim() : null;
   } catch {
     return null;
