@@ -646,6 +646,7 @@ function buildSummarizerPrompt(
   extractionPrompt: string,
   maxTokens: number,
   seed?: string,
+  microLedger?: string,
 ): string {
   const body = turns
     .map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${stubBulkPadText(turn.text)}`)
@@ -656,11 +657,16 @@ function buildSummarizerPrompt(
   const seedBlock = seed?.trim()
     ? `Workspace seed (MEMORY.md / latest handoff — prefer this over tool chips):\n${seed.trim()}\n\n`
     : "";
+  const notebook = microLedger?.trim()
+    ? `Running notebook (micro state vectors since last refresh — prefer these over silence for early facts):\n${microLedger.trim()}\n\n` +
+      "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n\n"
+    : "";
   return (
     `${extractionPrompt}\n\n` +
     `Token budget for the output: ${maxTokens}.\n\n` +
     seedBlock +
     prior +
+    notebook +
     "Transcript (tool chips omitted):\n" +
     body
   );
@@ -743,6 +749,8 @@ export async function compactSession(input: {
   workspaceSeed?: string;
   /** Tests inject a summarizer; production leaves this unset. */
   summarize?: (prompt: string) => Promise<string>;
+  /** Optional running notebook from micro-vectors ledger (since last compact). */
+  microLedger?: string;
 }): Promise<{ summary: string; turnText: string }> {
   const maxTokens = Math.max(256, input.maxTokens);
   const parts =
@@ -752,7 +760,12 @@ export async function compactSession(input: {
   const seed = parts.combined;
   const prose = proseTurns(input.transcript);
   const clipped = clipFromTail(prose.length ? prose : input.transcript, Math.max(maxTokens * 8, 4_000));
-  const harvested = harvestAddresses(seed, input.previousSummary, ...clipped.map((turn) => turn.text));
+  const harvested = harvestAddresses(
+    seed,
+    input.previousSummary,
+    input.microLedger,
+    ...clipped.map((turn) => turn.text),
+  );
   const pointers = harvestWorkPointers(input.transcript, {
     cwd: input.workingCwd,
     ...(Object.prototype.hasOwnProperty.call(input, "gitWorkingTree")
@@ -797,6 +810,7 @@ export async function compactSession(input: {
     input.extractionPrompt?.trim() || DEFAULT_EXTRACTION_PROMPT,
     maxTokens,
     seed,
+    input.microLedger,
   );
   let raw = "";
   if (input.summarize) {

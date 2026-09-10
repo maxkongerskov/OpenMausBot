@@ -439,6 +439,7 @@ export interface ConfigStatus {
     vectorBudget: number | null;
     prompt: string | null;
     keepVectors: boolean;
+    microVectorsEnabled: boolean;
     vectorArchiveDir: string | null;
     envOverride: number | null;
   };
