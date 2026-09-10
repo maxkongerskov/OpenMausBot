@@ -72,6 +72,8 @@ describe("injectStateVector", () => {
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/prefer live task truth/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/do not invent the next patch or feature/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).not.toMatch(/dogfood|canary|canaries|fill #n|orbit/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).not.toMatch(/one-page recap/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/hand off cleanly/);
   });
 });
 
