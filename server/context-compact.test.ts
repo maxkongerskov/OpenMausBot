@@ -67,9 +67,11 @@ describe("injectStateVector", () => {
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/await user/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/wait for next/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/confirm last turn/);
-    expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/Fill #N/);
-    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/goal or constraints/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/omit empty sections/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/running notebook/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/prefer live task truth/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/do not invent the next patch or feature/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).not.toMatch(/dogfood|canary|canaries|fill #n|orbit/);
   });
 });
 

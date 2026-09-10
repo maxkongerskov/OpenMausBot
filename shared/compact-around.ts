@@ -59,7 +59,7 @@ export function isLocalInjectModelId(modelId: string | null | undefined): boolea
 /** Default rewrite instructions. Editable in App Settings → Engines. Code still
  * never clips Open/Next and never smears chat over a disk handoff. */
 export const DEFAULT_EXTRACTION_PROMPT =
-  "Write a one-page state vector a successor can continue from without the transcript. " +
+  "Write a one-page recap a successor can continue from without the transcript. " +
   "Prefer these headings when they have content:\nGoal\nThis turn\nVerified facts\nAddresses\nLandmines\nConstraints\nOpen\n" +
   "Omit empty sections entirely — never write (none), (not stated), or filler placeholders. " +
   "This turn: include when useful — the last move that mattered (short). " +
@@ -69,12 +69,11 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "Constraints: never-do rules — omit unless real. " +
   "Open: unfinished work or a real pending decision the successor still needs — reference only, not a fake prompt. Omit Open entirely when nothing is open. " +
   "Never soft-park Open (or legacy Next): do not write provide a prompt, await user, wait for next, wait for next instruction, done, confirm last turn, provide first/next instruction or task, ask for a first instruction, confirm/verify/search for a previous chat turn, an essay from last turn, that you do not see it in history, or any meta about a missing transcript. " +
-  "Do not put harness/dogfood labels like Fill #N into Goal or Constraints. " +
   "Do not mention compaction, recycling, or a refreshed session. " +
-  "Drop long recipes, logs, UNIQUE/pad blobs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). Keep short canaries, paths, and ids — never paste bulk hex. " +
-  "When a running notebook (micro state vectors) is present, that notebook plus the last turn are the truth sources for Verified facts / Goal / This turn / Addresses / Open — do not promote unrelated MEMORY.md dogfood canaries into Verified facts. " +
+  "Drop long recipes, logs, UNIQUE/pad blobs, and how-tos a successor can re-read from disk (handoff_*.md / MEMORY.md). Keep short markers, paths, and ids — never paste bulk hex. " +
+  "When a running notebook is present, that notebook plus the last turn are the truth sources for Verified facts / Goal / This turn / Addresses / Open — prefer live task truth over unrelated durable notes when they conflict. " +
   "Without a notebook, prefer the workspace MEMORY.md / handoff_*.md seed over tool chips and old chat. " +
-  "MEMORY.md is for durable constraints still clearly relevant; never copy old canaries when the notebook contradicts or covers the task. " +
+  "MEMORY.md is for durable constraints still clearly relevant; never copy old markers from durable notes when the notebook contradicts or covers the task. " +
   "The latest user message is live truth — quote it; do not replace it with an older Goal from seed. " +
   "This page must work for any local task (code, research, ops), not one domain. " +
   "Ignore [tool …] chips. Quote verbatim. Do not invent. Do not invent the next patch or feature.";

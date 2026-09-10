@@ -1415,7 +1415,7 @@ function UsageChip({ bot }: { bot: Bot }) {
         `This chat is ${formatTokens(fill ?? 0)} of ${formatTokens(ceiling)} on the local model.`,
         keepChattingOn
           ? "Refreshes near 80%. Lifetime spend is in Settings → Usage."
-          : "Keep chatting is off — this chat will not recycle with a state vector. Lifetime spend is in Settings → Usage.",
+          : "Keep chatting is off — this chat will not refresh with a recap. Lifetime spend is in Settings → Usage.",
       ].join("\n")
     : !usage
       ? ""
