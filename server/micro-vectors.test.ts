@@ -5,14 +5,19 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   appendMicroVector,
+  awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   deleteTaskMicroVectors,
   markMicroCompacted,
   microLedgerPath,
-  microVectorsDir,
+  notebookPath,
   parseMicroNotebookResult,
   readMicroLedger,
+  readTaskNotebook,
+  sanitizeNotebookWrite,
   taskDir,
+  trackNotebookUpdate,
+  writeTaskNotebook,
 } from "./micro-vectors.ts";
 
 const scratch: string[] = [];
@@ -33,41 +38,65 @@ function tmp(): string {
   return dir;
 }
 
-describe("micro-vectors layout", () => {
-  it("nests under tasks/<thread>/micro-vectors when baseDir is injected", () => {
+describe("notebook path layout", () => {
+  it("places notebook.md under tasks/<threadId>/", () => {
     const base = tmp();
     const botId = "bot-a";
     const threadId = "task-1";
-    expect(microVectorsDir(botId, threadId, base)).toBe(
-      join(base, "tasks", threadId, "micro-vectors"),
-    );
+    expect(notebookPath(botId, threadId, base)).toBe(join(base, "tasks", threadId, "notebook.md"));
     expect(taskDir(botId, threadId, base)).toBe(join(base, "tasks", threadId));
   });
 });
 
-describe("LLM notebook prompt + parse", () => {
-  it("builds a reply-only prompt with state-vector headings", () => {
-    const prompt = buildMicroNotebookPrompt(
-      "Patched server/store.ts at 0xDeadBeef01. Do not touch deleteBot wipe. Next: run vitest.",
-    );
+describe("LLM notebook prompt + sanitize", () => {
+  it("builds a prompt with prior notebook + user + assistant", () => {
+    const prompt = buildMicroNotebookPrompt({
+      priorNotebook: "Goal\nFix store\nVerified facts\nstore.ts patched\nNext action\nrun vitest",
+      userText: "Also check deleteBot wipe",
+      assistantReply:
+        "Patched server/store.ts at 0xDeadBeef01. Do not touch deleteBot wipe. Next: run vitest.",
+    });
+    expect(prompt).toContain("Prior notebook:");
+    expect(prompt).toContain("Fix store");
+    expect(prompt).toContain("User:");
+    expect(prompt).toContain("Also check deleteBot wipe");
     expect(prompt).toContain("Assistant reply:");
     expect(prompt).toContain("0xDeadBeef01");
     expect(prompt).toContain("Verified facts");
+    expect(prompt.toLowerCase()).toContain("omit empty sections");
+    expect(prompt.toLowerCase()).toContain("never write (none)");
     expect(prompt.toLowerCase()).toContain("do not invent");
-    expect(prompt.toLowerCase()).toContain("ignore");
     expect(prompt.toLowerCase()).toMatch(/never confirm\/verify\/search/);
     expect(prompt).toMatch(/Fill #N/);
-    expect(prompt).not.toMatch(/\buser\b.*Fix the bug/i);
   });
 
   it("clips absurdly long replies", () => {
     const long = "x".repeat(13_000);
-    const prompt = buildMicroNotebookPrompt(long);
+    const prompt = buildMicroNotebookPrompt({ assistantReply: long });
     expect(prompt).toContain("…[clipped]");
-    expect(prompt.length).toBeLessThan(long.length);
+    expect(prompt).not.toContain("x".repeat(12_001));
   });
 
-  it("parses LLM markdown into a vector ledger entry", () => {
+  it("sanitizes Fill #N and banned Next on write", () => {
+    const page = [
+      "Goal",
+      "Fill #3 ship store fix",
+      "Verified facts",
+      "Patched store.ts",
+      "Constraints",
+      "Fill #3 only",
+      "Next action",
+      "wait for next instruction",
+    ].join("\n");
+    const cleaned = sanitizeNotebookWrite(page, "run the store tests");
+    expect(cleaned).toBeTruthy();
+    expect(cleaned!).not.toMatch(/Fill\s*#\s*3/i);
+    expect(cleaned!.toLowerCase()).not.toMatch(/wait for next/);
+    expect(cleaned!.toLowerCase()).toContain("next action");
+    expect(cleaned!).toMatch(/run the store tests/i);
+  });
+
+  it("parses LLM markdown into a sanitized vector entry", () => {
     const page = [
       "Goal",
       "Fix store wipe",
@@ -76,16 +105,13 @@ describe("LLM notebook prompt + parse", () => {
       "Addresses",
       "server/store.ts",
       "0xDeadBeef01",
-      "Landmines",
-      "Do not touch deleteBot wipe",
-      "Constraints",
-      "(none)",
       "Next action",
       "run vitest",
     ].join("\n");
     const entry = parseMicroNotebookResult(page, {
       at: new Date("2026-09-10T01:00:00.000Z"),
       sourceTurnChars: 120,
+      userText: "run vitest please",
     });
     expect(entry).toMatchObject({
       at: "2026-09-10T01:00:00.000Z",
@@ -100,14 +126,20 @@ describe("LLM notebook prompt + parse", () => {
     expect(parseMicroNotebookResult("")).toBeNull();
     expect(parseMicroNotebookResult("   ")).toBeNull();
     expect(parseMicroNotebookResult(null)).toBeNull();
+    expect(sanitizeNotebookWrite("")).toBeNull();
   });
 });
 
-describe("append + read roundtrip", () => {
-  it("writes ledger.jsonl and formats LLM notebook pages for compact", () => {
+describe("write + read notebook.md", () => {
+  it("writes notebook.md and compact reads it as primary", () => {
     const base = tmp();
-    const entry = parseMicroNotebookResult(
-      [
+    const path = writeTaskNotebook({
+      botId: "b1",
+      threadId: "t1",
+      taskTitle: "Fix store",
+      baseDir: base,
+      userText: "run vitest",
+      text: [
         "Goal",
         "Fix the bug in server/store.ts",
         "Verified facts",
@@ -118,29 +150,20 @@ describe("append + read roundtrip", () => {
         "Next action",
         "run vitest",
       ].join("\n"),
-      { at: new Date("2026-09-10T01:00:00.000Z") },
-    );
-    expect(entry).toBeTruthy();
-    const path = appendMicroVector({
-      botId: "b1",
-      threadId: "t1",
-      taskTitle: "Fix store",
-      entry: entry!,
-      baseDir: base,
     });
-    expect(path).toBe(microLedgerPath("b1", "t1", base));
+    expect(path).toBe(notebookPath("b1", "t1", base));
     expect(existsSync(path!)).toBe(true);
     const raw = readFileSync(path!, "utf8");
     expect(raw).toContain("0xDeadBeef01");
-    expect(raw).toContain('"vector"');
-    const blob = readMicroLedger("b1", "t1", { baseDir: base });
-    expect(blob).toContain("notebook");
+    const blob = readTaskNotebook("b1", "t1", { baseDir: base });
     expect(blob).toContain("Goal");
     expect(blob).toContain("0xDeadBeef01");
     expect(blob.toLowerCase()).toContain("store.ts");
+    // Thin ledger history also recorded.
+    expect(existsSync(microLedgerPath("b1", "t1", base))).toBe(true);
   });
 
-  it("still formats legacy structured entries", () => {
+  it("seeds notebook.md once from legacy ledger.jsonl when notebook missing", () => {
     const base = tmp();
     appendMicroVector({
       botId: "b1",
@@ -149,17 +172,42 @@ describe("append + read roundtrip", () => {
       entry: {
         at: "2026-09-10T01:00:00.000Z",
         role: "assistant",
-        goal: "legacy goal",
-        facts: ["legacy fact"],
+        vector: "Goal\nlegacy goal\nVerified facts\nlegacy fact\nNext action\nkeep going",
       },
     });
-    const blob = readMicroLedger("b1", "t1", { baseDir: base });
-    expect(blob).toContain("Goal: legacy goal");
+    expect(existsSync(notebookPath("b1", "t1", base))).toBe(false);
+    const blob = readTaskNotebook("b1", "t1", { baseDir: base });
+    expect(blob).toContain("legacy goal");
     expect(blob).toContain("legacy fact");
+    expect(existsSync(notebookPath("b1", "t1", base))).toBe(true);
+    expect(readFileSync(notebookPath("b1", "t1", base), "utf8")).toContain("legacy goal");
+  });
+
+  it("prefers notebook.md over ledger when both exist", () => {
+    const base = tmp();
+    writeTaskNotebook({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nfrom notebook file\nNext action\ncontinue",
+      appendLedger: false,
+    });
+    appendMicroVector({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      entry: {
+        at: "2026-09-10T01:00:00.000Z",
+        role: "assistant",
+        vector: "Goal\nfrom ledger only\nNext action\nignore",
+      },
+    });
+    expect(readTaskNotebook("b1", "t1", { baseDir: base })).toContain("from notebook file");
+    expect(readTaskNotebook("b1", "t1", { baseDir: base })).not.toContain("from ledger only");
   });
 });
 
-describe("compact boundary", () => {
+describe("compact boundary ledger", () => {
   it("readMicroLedger only returns lines after the last compacted marker", () => {
     const base = tmp();
     appendMicroVector({
@@ -196,30 +244,52 @@ describe("compact boundary", () => {
 });
 
 describe("deleteTaskMicroVectors", () => {
-  it("removes the task folder", () => {
+  it("removes the task folder including notebook.md", () => {
     const base = tmp();
-    appendMicroVector({
+    writeTaskNotebook({
       botId: "b1",
       threadId: "t1",
       baseDir: base,
-      entry: { at: "2026-09-10T01:00:00.000Z", role: "assistant", note: "x" },
+      text: "Goal\nx\nNext action\ny",
     });
+    expect(existsSync(notebookPath("b1", "t1", base))).toBe(true);
     expect(existsSync(taskDir("b1", "t1", base))).toBe(true);
     deleteTaskMicroVectors("b1", "t1", base);
     expect(existsSync(taskDir("b1", "t1", base))).toBe(false);
   });
 });
 
-describe("disabled callers", () => {
-  it("helpers still work; callers skip append when microVectorsEnabled is false", () => {
+describe("await pending notebook update", () => {
+  it("waits briefly for an in-flight write", async () => {
     const base = tmp();
-    const path = appendMicroVector({
+    let done = false;
+    const update = (async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      writeTaskNotebook({
+        botId: "b1",
+        threadId: "t1",
+        baseDir: base,
+        text: "Goal\nawaited\nNext action\ngo",
+      });
+      done = true;
+    })();
+    trackNotebookUpdate("b1", "t1", update);
+    await awaitPendingNotebookUpdate("b1", "t1", 2_000);
+    expect(done).toBe(true);
+    expect(readTaskNotebook("b1", "t1", { baseDir: base })).toContain("awaited");
+  });
+});
+
+describe("disabled callers", () => {
+  it("helpers still work; callers skip write when microVectorsEnabled is false", () => {
+    const base = tmp();
+    const path = writeTaskNotebook({
       botId: "b1",
       threadId: "t1",
       baseDir: base,
-      entry: { at: "2026-09-10T01:00:00.000Z", role: "assistant", note: "still writable" },
+      text: "Goal\nstill writable\nNext action\ncontinue",
     });
     expect(path).toBeTruthy();
-    expect(readMicroLedger("b1", "t1", { baseDir: base })).toContain("still writable");
+    expect(readTaskNotebook("b1", "t1", { baseDir: base })).toContain("still writable");
   });
 });

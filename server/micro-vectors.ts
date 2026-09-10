@@ -1,16 +1,18 @@
-// Per-task micro state vectors: LLM notebook pages between Keep chatting
-// compact cycles. Opt-in via compaction.microVectorsEnabled. Writers never
-// throw — a disk hiccup must not fail a turn or a compact.
+// Per-task rolling notebook for Keep chatting. Opt-in via
+// compaction.microVectorsEnabled. Writers never throw — a disk hiccup must
+// not fail a turn or a compact.
 //
-// Product rule: all state-vector truth is LLM intelligence, not scripts.
-// The harness only decides when to fire, I/O's the ledger, and calls
-// generateText on the assistant's visible reply. No regex/heuristic truth.
+// Product rule: all notebook truth is LLM intelligence, not scripts.
+// The harness only decides when to fire, I/O's notebook.md, sanitizes the
+// write, and calls generateSideText. No regex/heuristic truth inventing.
 //
 // Layout (under each bot workspace via workspaceDir):
 //   workspaces/<botId>/tasks/<threadId>/meta.json
-//   workspaces/<botId>/tasks/<threadId>/micro-vectors/ledger.jsonl
+//   workspaces/<botId>/tasks/<threadId>/notebook.md   ← primary (rolling)
+//   workspaces/<botId>/tasks/<threadId>/micro-vectors/ledger.jsonl  ← thin history / migration seed
 //
 // deleteBot already rmSync(workspaceDir(id)), which wipes tasks/ with it.
+// deleteTask → deleteTaskMicroVectors removes tasks/<threadId>/ (notebook included).
 import {
   appendFileSync,
   existsSync,
@@ -22,16 +24,22 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { sanitizeForwardOnlyVector } from "./context-compact.ts";
 import { workspaceDir } from "./workspace.ts";
 
 export const TASKS_DIRNAME = "tasks";
 export const MICRO_VECTORS_DIRNAME = "micro-vectors";
 export const LEDGER_FILENAME = "ledger.jsonl";
 export const META_FILENAME = "meta.json";
+export const NOTEBOOK_FILENAME = "notebook.md";
 
-/** Clip absurdly long assistant replies before the side LLM call. */
+/** Clip absurdly long assistant replies / user text before the side LLM call. */
 export const MICRO_REPLY_CLIP_CHARS = 12_000;
+export const MICRO_USER_CLIP_CHARS = 4_000;
 const DEFAULT_READ_CHARS = 12_000;
+
+/** Best-effort wait for an in-flight notebook settle update before compact. */
+export const NOTEBOOK_AWAIT_MS = 3_000;
 
 export type MicroVectorEntry = {
   at: string;
@@ -74,19 +82,29 @@ export function microLedgerPath(botId: string, threadId: string, baseDir?: strin
   return join(microVectorsDir(botId, threadId, baseDir), LEDGER_FILENAME);
 }
 
+export function notebookPath(botId: string, threadId: string, baseDir?: string): string {
+  return join(taskDir(botId, threadId, baseDir), NOTEBOOK_FILENAME);
+}
+
 export function taskMetaPath(botId: string, threadId: string, baseDir?: string): string {
   return join(taskDir(botId, threadId, baseDir), META_FILENAME);
 }
 
-/** Ensure tasks/<thread>/micro-vectors exists. Returns the micro-vectors dir or null. */
+function clipText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n…[clipped]`;
+}
+
+/** Ensure tasks/<thread>/ exists (and micro-vectors/ for thin ledger). Returns task dir or null. */
 export function ensureTaskMicroDir(
   botId: string,
   threadId: string,
   opts?: { baseDir?: string; taskTitle?: string },
 ): string | null {
   try {
-    const dir = microVectorsDir(botId, threadId, opts?.baseDir);
+    const dir = taskDir(botId, threadId, opts?.baseDir);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    mkdirSync(microVectorsDir(botId, threadId, opts?.baseDir), { recursive: true, mode: 0o700 });
     writeTaskMeta(botId, threadId, { taskTitle: opts?.taskTitle, baseDir: opts?.baseDir });
     return dir;
   } catch {
@@ -127,53 +145,116 @@ function writeTaskMeta(
 }
 
 /**
- * Side-LLM prompt: assistant visible reply only → markdown micro notebook page.
- * Truth comes from the reply; do not invent; ignore leaked tool chips.
+ * Side-LLM prompt: prior rolling notebook + this turn's user text + assistant
+ * reply → updated notebook.md. Dense: Goal / Verified facts / Next primarily;
+ * omit empty optional sections (never spam (none)).
  */
-export function buildMicroNotebookPrompt(assistantReply: string): string {
-  const clipped =
-    assistantReply.length > MICRO_REPLY_CLIP_CHARS
-      ? `${assistantReply.slice(0, MICRO_REPLY_CLIP_CHARS)}\n…[clipped]`
-      : assistantReply;
+export function buildMicroNotebookPrompt(input: {
+  priorNotebook?: string;
+  userText?: string;
+  assistantReply: string;
+}): string {
+  const prior = (input.priorNotebook ?? "").trim();
+  const user = clipText((input.userText ?? "").trim(), MICRO_USER_CLIP_CHARS);
+  const reply = clipText(input.assistantReply, MICRO_REPLY_CLIP_CHARS);
   return (
-    "Extract a compact micro state-vector notebook page from the assistant's visible chat reply below.\n" +
-    "Use these headings exactly (markdown):\n" +
-    "Goal\nVerified facts\nAddresses\nLandmines\nConstraints\nNext action\n" +
+    "Update the rolling task notebook from the prior notebook (if any) plus this turn's user message and assistant reply.\n" +
+    "Output a single dense markdown page. Prefer these headings when they have content:\n" +
+    "Goal\nVerified facts\nNext action\n" +
+    "Add Addresses, Landmines, or Constraints only when this turn (or prior notebook) actually states them.\n" +
     "Rules:\n" +
-    "- Quote verbatim from the reply. Do not invent facts, paths, ids, or next steps.\n" +
-    "- If the reply does not state a section, write (none) or omit detail — never guess.\n" +
+    "- Quote verbatim. Do not invent facts, paths, ids, or next steps.\n" +
+    "- Omit empty sections entirely — never write (none), (not stated), or filler placeholders.\n" +
+    "- Carry forward uncontradicted Goal / Verified facts / Addresses / Landmines / Constraints from the prior notebook.\n" +
     "- Ignore [tool …] chips or tool telemetry if any leaked into the reply text.\n" +
     "- Keep each section short (a few lines). No bulk UNIQUE/pad hex.\n" +
     "- Next action: exactly one forward concrete step for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or transcript meta.\n" +
-    "- Do not put harness/dogfood labels like Fill #N into Constraints.\n" +
+    "- Do not put harness/dogfood labels like Fill #N into Goal or Constraints.\n" +
     "- Do not mention compaction, recycling, or a refreshed session.\n" +
     "- Output only the markdown page, no preamble.\n\n" +
+    (prior
+      ? `Prior notebook:\n${prior}\n\n`
+      : "Prior notebook:\n(none yet — start from this turn)\n\n") +
+    (user ? `User:\n${user}\n\n` : "") +
     "Assistant reply:\n" +
-    clipped
+    reply
   );
 }
 
 /**
- * Turn a side-LLM notebook response into a ledger entry.
- * Stores the markdown page in `vector` (full page). Returns null if empty/useless.
+ * Validate side-LLM notebook markdown. Returns cleaned text or null if empty.
+ * Applies the same forward-only Next ban + Fill #N strip as compact.
+ */
+export function sanitizeNotebookWrite(
+  raw: string | null | undefined,
+  userText = "",
+): string | null {
+  const text = raw?.trim() ?? "";
+  if (!text || text.length < 8) return null;
+  const cleaned = sanitizeForwardOnlyVector(text, userText).trim();
+  if (!cleaned || cleaned.length < 8) return null;
+  return cleaned;
+}
+
+/**
+ * Turn a side-LLM notebook response into a ledger entry (thin history).
+ * Returns null if empty/useless. Prefer writeTaskNotebook for the primary file.
  */
 export function parseMicroNotebookResult(
   raw: string | null | undefined,
-  opts?: { at?: Date; sourceTurnChars?: number },
+  opts?: { at?: Date; sourceTurnChars?: number; userText?: string },
 ): MicroVectorEntry | null {
-  const text = raw?.trim() ?? "";
-  if (!text) return null;
-  // Refuse pure refusals / empty shells with no substance.
-  if (text.length < 8) return null;
+  const cleaned = sanitizeNotebookWrite(raw, opts?.userText ?? "");
+  if (!cleaned) return null;
   return {
     at: (opts?.at ?? new Date()).toISOString(),
     role: "assistant",
-    vector: text,
+    vector: cleaned,
     ...(typeof opts?.sourceTurnChars === "number" ? { sourceTurnChars: opts.sourceTurnChars } : {}),
   };
 }
 
-/** Append one micro note. Never throws. Returns ledger path or null. */
+/** Overwrite tasks/<thread>/notebook.md with sanitized markdown. Never throws. */
+export function writeTaskNotebook(input: {
+  botId: string;
+  threadId: string;
+  text: string;
+  userText?: string;
+  taskTitle?: string;
+  baseDir?: string;
+  /** When true (default), also append a thin ledger snapshot for history. */
+  appendLedger?: boolean;
+}): string | null {
+  try {
+    const cleaned = sanitizeNotebookWrite(input.text, input.userText ?? "");
+    if (!cleaned) return null;
+    const dir = ensureTaskMicroDir(input.botId, input.threadId, {
+      baseDir: input.baseDir,
+      taskTitle: input.taskTitle,
+    });
+    if (!dir) return null;
+    const path = notebookPath(input.botId, input.threadId, input.baseDir);
+    writeFileSync(path, `${cleaned}\n`, { mode: 0o600 });
+    if (input.appendLedger !== false) {
+      appendMicroVector({
+        botId: input.botId,
+        threadId: input.threadId,
+        taskTitle: input.taskTitle,
+        baseDir: input.baseDir,
+        entry: {
+          at: new Date().toISOString(),
+          role: "assistant",
+          vector: cleaned,
+        },
+      });
+    }
+    return path;
+  } catch {
+    return null;
+  }
+}
+
+/** Append one micro note to the thin ledger. Never throws. Returns ledger path or null. */
 export function appendMicroVector(input: {
   botId: string;
   threadId: string;
@@ -195,7 +276,7 @@ export function appendMicroVector(input: {
   }
 }
 
-/** Mark a successful compact boundary so the next read starts fresh after it. */
+/** Mark a successful compact boundary on the thin ledger (history only). */
 export function markMicroCompacted(input: {
   botId: string;
   threadId: string;
@@ -228,27 +309,26 @@ function parseLedgerLines(raw: string): MicroVectorEntry[] {
   return out;
 }
 
-/** Format one ledger entry for the compact LLM prompt. */
+/** Format one ledger entry for the compact LLM prompt / migration seed. */
 function formatEntry(entry: MicroVectorEntry): string {
   if (entry.compacted) return "";
   const page = entry.vector?.trim() || entry.note?.trim();
   if (page && (entry.vector || /^(Goal|Verified facts|Addresses|Landmines|Constraints|Next action)\b/m.test(page))) {
-    return `[${entry.at}] ${entry.role} notebook\n${page}`;
+    return page;
   }
   const bits: string[] = [];
-  bits.push(`[${entry.at}] ${entry.role}`);
-  if (entry.goal) bits.push(`Goal: ${entry.goal}`);
-  if (entry.facts?.length) bits.push(`Facts: ${entry.facts.join("; ")}`);
-  if (entry.addresses?.length) bits.push(`Addresses: ${entry.addresses.join(", ")}`);
-  if (entry.landmines?.length) bits.push(`Landmines: ${entry.landmines.join("; ")}`);
-  if (entry.constraints?.length) bits.push(`Constraints: ${entry.constraints.join("; ")}`);
-  if (entry.next) bits.push(`Next: ${entry.next}`);
+  if (entry.goal) bits.push(`Goal\n${entry.goal}`);
+  if (entry.facts?.length) bits.push(`Verified facts\n${entry.facts.join("\n")}`);
+  if (entry.addresses?.length) bits.push(`Addresses\n${entry.addresses.join("\n")}`);
+  if (entry.landmines?.length) bits.push(`Landmines\n${entry.landmines.join("\n")}`);
+  if (entry.constraints?.length) bits.push(`Constraints\n${entry.constraints.join("\n")}`);
+  if (entry.next) bits.push(`Next action\n${entry.next}`);
   if (entry.note) bits.push(entry.note);
   return bits.join("\n");
 }
 
 /**
- * Read the micro ledger as a text blob for the compact seed.
+ * Read the thin micro ledger as a text blob (legacy / history).
  * Prefer lines after the last `{compacted:true}` marker.
  */
 export function readMicroLedger(
@@ -291,7 +371,113 @@ export function readMicroLedger(
 }
 
 /**
- * Remove tasks/<threadId>/ (meta + micro-vectors). Safe if missing.
+ * Latest non-empty notebook page from the thin ledger (for one-shot migration).
+ */
+function latestLedgerNotebookPage(
+  botId: string,
+  threadId: string,
+  baseDir?: string,
+): string {
+  try {
+    const path = microLedgerPath(botId, threadId, baseDir);
+    if (!existsSync(path)) return "";
+    const entries = parseLedgerLines(readFileSync(path, "utf8"));
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      if (entry.compacted) continue;
+      const page = formatEntry(entry).trim();
+      if (page) return page;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Primary compact reader: rolling notebook.md.
+ * If missing once, optionally seed from the latest ledger.jsonl page and
+ * write notebook.md so subsequent reads hit the file.
+ */
+export function readTaskNotebook(
+  botId: string,
+  threadId: string,
+  opts?: { maxChars?: number; baseDir?: string; seedFromLedger?: boolean },
+): string {
+  try {
+    const path = notebookPath(botId, threadId, opts?.baseDir);
+    if (existsSync(path)) {
+      const text = readFileSync(path, "utf8").trim();
+      if (text) {
+        const maxChars = opts?.maxChars ?? DEFAULT_READ_CHARS;
+        return text.length > maxChars ? text.slice(0, maxChars) : text;
+      }
+    }
+    if (opts?.seedFromLedger === false) return "";
+    const seeded = latestLedgerNotebookPage(botId, threadId, opts?.baseDir).trim();
+    if (!seeded) return "";
+    // One-shot migration: persist so compact keeps trusting notebook.md.
+    try {
+      ensureTaskMicroDir(botId, threadId, { baseDir: opts?.baseDir });
+      writeFileSync(path, `${seeded}\n`, { mode: 0o600 });
+    } catch {
+      /* still return seeded even if write fails */
+    }
+    const maxChars = opts?.maxChars ?? DEFAULT_READ_CHARS;
+    return seeded.length > maxChars ? seeded.slice(0, maxChars) : seeded;
+  } catch {
+    return "";
+  }
+}
+
+// --- In-flight settle updates (await briefly before compact) ---
+
+const pendingNotebookByThread = new Map<string, Promise<unknown>>();
+
+function notebookKey(botId: string, threadId: string): string {
+  return `${botId}::${threadId}`;
+}
+
+/** Register a fire-and-forget notebook update so compact can await it briefly. */
+export function trackNotebookUpdate(
+  botId: string,
+  threadId: string,
+  update: Promise<unknown>,
+): void {
+  const key = notebookKey(botId, threadId);
+  const tracked = Promise.resolve(update).finally(() => {
+    if (pendingNotebookByThread.get(key) === tracked) {
+      pendingNotebookByThread.delete(key);
+    }
+  });
+  pendingNotebookByThread.set(key, tracked);
+}
+
+/** Best-effort wait for an in-flight notebook write (default ~3s). */
+export async function awaitPendingNotebookUpdate(
+  botId: string,
+  threadId: string,
+  ms = NOTEBOOK_AWAIT_MS,
+): Promise<void> {
+  const pending = pendingNotebookByThread.get(notebookKey(botId, threadId));
+  if (!pending) return;
+  const bound = Math.max(0, ms);
+  if (bound === 0) return;
+  try {
+    await Promise.race([
+      pending,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, bound);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    /* soft — compact proceeds with whatever notebook is on disk */
+  }
+}
+
+/**
+ * Remove tasks/<threadId>/ (meta + notebook.md + micro-vectors). Safe if missing.
  * deleteBot already recursive-wipes workspaceDir(id) which includes tasks/.
  */
 export function deleteTaskMicroVectors(botId: string, threadId: string, baseDir?: string): void {
