@@ -695,7 +695,11 @@ function buildSummarizerPrompt(
   );
 }
 
-async function summarizeViaLocalHost(
+/**
+ * Side text via a local host::model inject id (Unsloth / oMLX / …).
+ * Returns null when the id is not inject, the host is unknown, or the call fails.
+ */
+export async function summarizeViaLocalHost(
   modelId: string,
   prompt: string,
   maxTokens: number,
@@ -735,6 +739,40 @@ async function summarizeViaLocalHost(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Side-channel LLM text: prefer local inject (decodeInjectId → host chat/completions),
+ * then optional generateText. Returns null when both paths fail — callers skip write.
+ */
+export async function generateSideText(input: {
+  modelId?: string | null;
+  prompt: string;
+  generateText?: ((prompt: string) => Promise<string>) | undefined;
+  maxTokens?: number;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+}): Promise<string | null> {
+  const maxTokens = Math.max(256, input.maxTokens ?? 1024);
+  if (input.modelId) {
+    const viaLocal = await summarizeViaLocalHost(
+      input.modelId,
+      input.prompt,
+      maxTokens,
+      input.env ?? process.env,
+      input.fetchImpl ?? fetch,
+    );
+    if (viaLocal) return viaLocal;
+  }
+  if (input.generateText) {
+    try {
+      const text = (await input.generateText(input.prompt)).trim();
+      return text || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function sanitizeVector(text: string, maxTokens: number): string {
@@ -847,22 +885,16 @@ export async function compactSession(input: {
       raw = "";
     }
   }
-  if (!raw && input.modelId) {
+  if (!raw) {
     raw =
-      (await summarizeViaLocalHost(
-        input.modelId,
+      (await generateSideText({
+        modelId: input.modelId,
         prompt,
+        generateText: input.generateText,
         maxTokens,
-        input.env ?? process.env,
-        input.fetchImpl ?? fetch,
-      )) ?? "";
-  }
-  if (!raw && input.generateText) {
-    try {
-      raw = (await input.generateText(prompt)).trim();
-    } catch {
-      raw = "";
-    }
+        env: input.env,
+        fetchImpl: input.fetchImpl,
+      })) ?? "";
   }
   if (!raw) raw = extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
   let summary = sanitizeVector(raw, maxTokens) || extractiveFallback(clipped, input.previousSummary, maxTokens, seed, input.microLedger);
