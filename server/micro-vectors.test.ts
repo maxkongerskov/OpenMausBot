@@ -5,18 +5,22 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   appendMicroVector,
+  appendTurnPage,
+  archiveAndSeedNotebook,
   awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   deleteTaskMicroVectors,
   markMicroCompacted,
   microLedgerPath,
   notebookPath,
+  notebooksArchiveDir,
   parseMicroNotebookResult,
   readMicroLedger,
   readTaskNotebook,
   sanitizeNotebookWrite,
   taskDir,
   trackNotebookUpdate,
+  TURN_PAGE_SEPARATOR,
   writeTaskNotebook,
 } from "./micro-vectors.ts";
 
@@ -49,14 +53,17 @@ describe("notebook path layout", () => {
 });
 
 describe("LLM notebook prompt + sanitize", () => {
-  it("builds a prompt with prior notebook + user + assistant", () => {
+  it("builds a harvest turn-page prompt with prior as context only", () => {
     const prompt = buildMicroNotebookPrompt({
       priorNotebook: "Goal\nFix store\nVerified facts\nstore.ts patched\nNext action\nrun vitest",
       userText: "Also check deleteBot wipe",
       assistantReply:
         "Patched server/store.ts at 0xDeadBeef01. Do not touch deleteBot wipe. Next: run vitest.",
     });
-    expect(prompt).toContain("Prior notebook:");
+    expect(prompt).toMatch(/Harvest a rich turn page/i);
+    expect(prompt).toContain("This turn");
+    expect(prompt).toContain("Prior notebook (context only");
+    expect(prompt).toMatch(/Do NOT rewrite/i);
     expect(prompt).toContain("Fix store");
     expect(prompt).toContain("User:");
     expect(prompt).toContain("Also check deleteBot wipe");
@@ -243,8 +250,96 @@ describe("compact boundary ledger", () => {
   });
 });
 
+describe("appendTurnPage", () => {
+  it("appends pages with separator and never rewrites prior pages", () => {
+    const base = tmp();
+    appendTurnPage({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nFix store\nThis turn\nfirst page\nVerified facts\nA\nNext action\ncontinue",
+      appendLedger: false,
+    });
+    appendTurnPage({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nFix store\nThis turn\nsecond page\nAddresses\n0xCafe\nVerified facts\nB\nNext action\nrun tests",
+      appendLedger: false,
+    });
+    const raw = readFileSync(notebookPath("b1", "t1", base), "utf8");
+    expect(raw).toContain("first page");
+    expect(raw).toContain("second page");
+    expect(raw).toContain(TURN_PAGE_SEPARATOR);
+    expect(raw.indexOf("first page")).toBeLessThan(raw.indexOf("second page"));
+    const blob = readTaskNotebook("b1", "t1", { baseDir: base });
+    expect(blob).toContain("first page");
+    expect(blob).toContain("0xCafe");
+  });
+});
+
+describe("archiveAndSeedNotebook", () => {
+  it("archives live stack to notebooks/session-NNN.md and seeds live with V", () => {
+    const base = tmp();
+    appendTurnPage({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nold stack\nThis turn\npage one\nVerified facts\nkeep me\nNext action\ngo",
+      appendLedger: false,
+    });
+    appendTurnPage({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nold stack\nThis turn\npage two\nAddresses\n0xDead\nNext action\ngo",
+      appendLedger: false,
+    });
+    const result = archiveAndSeedNotebook({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      seedText:
+        "Goal\nFix store\nVerified facts\nfolded from stack\nAddresses\n0xDead\nNext action\nrun vitest",
+      userText: "run vitest",
+    });
+    expect(result.archivePath).toBeTruthy();
+    expect(result.archivePath!).toContain(join("notebooks", "session-001.md"));
+    expect(existsSync(result.archivePath!)).toBe(true);
+    const archived = readFileSync(result.archivePath!, "utf8");
+    expect(archived).toContain("page one");
+    expect(archived).toContain("page two");
+    const live = readFileSync(notebookPath("b1", "t1", base), "utf8");
+    expect(live).toContain("folded from stack");
+    expect(live).not.toContain("page one");
+    // Next settle appends under the seed
+    appendTurnPage({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      text: "Goal\nFix store\nThis turn\nafter seed\nNext action\ncontinue",
+      appendLedger: false,
+    });
+    const after = readFileSync(notebookPath("b1", "t1", base), "utf8");
+    expect(after).toContain("folded from stack");
+    expect(after).toContain("after seed");
+    expect(after).toContain(TURN_PAGE_SEPARATOR);
+    // second compact archives as session-002
+    const second = archiveAndSeedNotebook({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      seedText: "Goal\nround two\nVerified facts\nok\nNext action\nship",
+      userText: "ship it",
+    });
+    expect(second.archivePath!).toContain("session-002.md");
+    expect(existsSync(join(notebooksArchiveDir("b1", "t1", base), "session-001.md"))).toBe(true);
+    expect(existsSync(join(notebooksArchiveDir("b1", "t1", base), "session-002.md"))).toBe(true);
+  });
+});
+
 describe("deleteTaskMicroVectors", () => {
-  it("removes the task folder including notebook.md", () => {
+  it("removes the task folder including notebook.md and notebooks/", () => {
     const base = tmp();
     writeTaskNotebook({
       botId: "b1",
@@ -252,7 +347,14 @@ describe("deleteTaskMicroVectors", () => {
       baseDir: base,
       text: "Goal\nx\nNext action\ny",
     });
+    archiveAndSeedNotebook({
+      botId: "b1",
+      threadId: "t1",
+      baseDir: base,
+      seedText: "Goal\nseed\nVerified facts\nz\nNext action\ngo",
+    });
     expect(existsSync(notebookPath("b1", "t1", base))).toBe(true);
+    expect(existsSync(notebooksArchiveDir("b1", "t1", base))).toBe(true);
     expect(existsSync(taskDir("b1", "t1", base))).toBe(true);
     deleteTaskMicroVectors("b1", "t1", base);
     expect(existsSync(taskDir("b1", "t1", base))).toBe(false);
@@ -265,11 +367,11 @@ describe("await pending notebook update", () => {
     let done = false;
     const update = (async () => {
       await new Promise((r) => setTimeout(r, 40));
-      writeTaskNotebook({
+      appendTurnPage({
         botId: "b1",
         threadId: "t1",
         baseDir: base,
-        text: "Goal\nawaited\nNext action\ngo",
+        text: "Goal\nawaited\nThis turn\nsettled\nNext action\ngo",
       });
       done = true;
     })();

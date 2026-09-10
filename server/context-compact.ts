@@ -7,6 +7,11 @@ import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 
 import { DEFAULT_EXTRACTION_PROMPT } from "../shared/compact-around.ts";
+
+/** Soft sanity cap when folding a live notebook stack into V (tens of k chars OK). */
+const NOTEBOOK_FOLD_SOFT_CAP_CHARS = 48_000;
+/** ~30 token floor for a folded notebook vector. */
+const NOTEBOOK_FOLD_MIN_TOKENS = 30;
 import { decodeInjectId, hostApiKey, localHost } from "./drivers/local-inject.ts";
 import {
   clipFromTail,
@@ -767,8 +772,11 @@ function buildSummarizerPrompt(
       : `Workspace seed (MEMORY.md / latest handoff — prefer this over tool chips):\n${seed.trim()}\n\n`
     : "";
   const notebook = hasNotebook
-    ? `PRIMARY TRUTH — Running notebook (micro state vectors since last refresh):\n${microLedger!.trim()}\n\n` +
-      "Truth sources: this notebook + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
+    ? `PRIMARY TRUTH — Live notebook stack (seed + appended turn pages since last refresh):\n${microLedger!.trim()}\n\n` +
+      "Fold the ENTIRE notebook stack above into one long quality-preserving state vector. " +
+      "Do not drop uncontradicted Goal / This turn facts / Verified facts / Addresses / Landmines from any page. " +
+      "Prefer length and fidelity over aggressive compression (tens of k characters is OK; soft host cap only).\n" +
+      "Truth sources: this notebook stack + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
       "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n" +
       "Next action must be exactly one forward concrete step the successor should do for the user — never done, wait for next, confirm last turn, provide first/next instruction or task, ask for a first instruction, verify/search for a previous chat turn, an essay from last turn, missing history, or meta about a missing transcript. Never put Fill #N into Goal or Constraints.\n\n"
     : "";
@@ -923,7 +931,17 @@ export async function compactSession(input: {
   /** Latest assistant visible reply on the compacting turn (with userText = last turn). */
   lastAssistantText?: string;
 }): Promise<{ summary: string; turnText: string }> {
-  const maxTokens = Math.max(256, input.maxTokens);
+  const requestedMax = Math.max(256, input.maxTokens);
+  const notebookPresentEarly = Boolean(input.microLedger?.trim());
+  // Notebook fold: allow a long quality-preserving V (soft char cap → tokens).
+  // ~30 token floor already covered by Math.max(256, …) for non-notebook; keep floor explicit.
+  const notebookFoldTokens = Math.max(
+    NOTEBOOK_FOLD_MIN_TOKENS,
+    Math.ceil(NOTEBOOK_FOLD_SOFT_CAP_CHARS / 4),
+  );
+  const maxTokens = notebookPresentEarly
+    ? Math.max(requestedMax, notebookFoldTokens)
+    : requestedMax;
   const parts =
     input.workspaceSeed !== undefined
       ? { combined: input.workspaceSeed, newestHandoff: input.workspaceSeed }

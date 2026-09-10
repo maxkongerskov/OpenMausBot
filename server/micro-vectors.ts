@@ -8,11 +8,12 @@
 //
 // Layout (under each bot workspace via workspaceDir):
 //   workspaces/<botId>/tasks/<threadId>/meta.json
-//   workspaces/<botId>/tasks/<threadId>/notebook.md   ← primary (rolling)
+//   workspaces/<botId>/tasks/<threadId>/notebook.md   ← live stack (seed + appended turn pages)
+//   workspaces/<botId>/tasks/<threadId>/notebooks/session-NNN.md  ← archived stacks after compact
 //   workspaces/<botId>/tasks/<threadId>/micro-vectors/ledger.jsonl  ← thin history / migration seed
 //
 // deleteBot already rmSync(workspaceDir(id)), which wipes tasks/ with it.
-// deleteTask → deleteTaskMicroVectors removes tasks/<threadId>/ (notebook included).
+// deleteTask → deleteTaskMicroVectors removes tasks/<threadId>/ (notebook + notebooks/ included).
 import {
   appendFileSync,
   existsSync,
@@ -32,11 +33,21 @@ export const MICRO_VECTORS_DIRNAME = "micro-vectors";
 export const LEDGER_FILENAME = "ledger.jsonl";
 export const META_FILENAME = "meta.json";
 export const NOTEBOOK_FILENAME = "notebook.md";
+export const NOTEBOOKS_ARCHIVE_DIRNAME = "notebooks";
+
+/** Clear separator between appended turn pages (never rewrite prior pages). */
+export const TURN_PAGE_SEPARATOR = "---";
 
 /** Clip absurdly long assistant replies / user text before the side LLM call. */
 export const MICRO_REPLY_CLIP_CHARS = 12_000;
 export const MICRO_USER_CLIP_CHARS = 4_000;
-const DEFAULT_READ_CHARS = 12_000;
+/** Compact/read soft cap for the live notebook stack (tens of k chars OK). */
+export const NOTEBOOK_STACK_READ_CHARS = 64_000;
+/** Folded state-vector soft sanity cap after compact (host-friendly). */
+export const NOTEBOOK_FOLD_SOFT_CAP_CHARS = 48_000;
+/** ~30 token floor for a folded notebook vector. */
+export const NOTEBOOK_FOLD_MIN_TOKENS = 30;
+const DEFAULT_READ_CHARS = NOTEBOOK_STACK_READ_CHARS;
 
 /** Best-effort wait for an in-flight notebook settle update before compact. */
 export const NOTEBOOK_AWAIT_MS = 3_000;
@@ -84,6 +95,10 @@ export function microLedgerPath(botId: string, threadId: string, baseDir?: strin
 
 export function notebookPath(botId: string, threadId: string, baseDir?: string): string {
   return join(taskDir(botId, threadId, baseDir), NOTEBOOK_FILENAME);
+}
+
+export function notebooksArchiveDir(botId: string, threadId: string, baseDir?: string): string {
+  return join(taskDir(botId, threadId, baseDir), NOTEBOOKS_ARCHIVE_DIRNAME);
 }
 
 export function taskMetaPath(botId: string, threadId: string, baseDir?: string): string {
@@ -145,9 +160,10 @@ function writeTaskMeta(
 }
 
 /**
- * Side-LLM prompt: prior rolling notebook + this turn's user text + assistant
- * reply → updated notebook.md. Dense: Goal / Verified facts / Next primarily;
- * omit empty optional sections (never spam (none)).
+ * Side-LLM prompt: harvest a rich turn page from this turn (append-only).
+ * Headings: Goal, This turn, Addresses, Verified facts, Landmines (only if
+ * present), Next action. Prior notebook is continuity context only — never
+ * rewrite or fold it into this page.
  */
 export function buildMicroNotebookPrompt(input: {
   priorNotebook?: string;
@@ -155,25 +171,29 @@ export function buildMicroNotebookPrompt(input: {
   assistantReply: string;
 }): string {
   const prior = (input.priorNotebook ?? "").trim();
+  // Enough prior for Goal continuity; the live file keeps the full stack.
+  const priorClip = prior ? clipText(prior, 6_000) : "";
   const user = clipText((input.userText ?? "").trim(), MICRO_USER_CLIP_CHARS);
   const reply = clipText(input.assistantReply, MICRO_REPLY_CLIP_CHARS);
   return (
-    "Update the rolling task notebook from the prior notebook (if any) plus this turn's user message and assistant reply.\n" +
-    "Output a single dense markdown page. Prefer these headings when they have content:\n" +
-    "Goal\nVerified facts\nNext action\n" +
-    "Add Addresses, Landmines, or Constraints only when this turn (or prior notebook) actually states them.\n" +
+    "Harvest a rich turn page from this turn's user message and assistant reply.\n" +
+    "Output a single dense markdown page for THIS turn only. Prefer these headings when they have content:\n" +
+    "Goal\nThis turn\nAddresses\nVerified facts\nLandmines\nNext action\n" +
+    "Include Landmines only when this turn (or clearly carried Goal context) actually states a landmine.\n" +
     "Rules:\n" +
     "- Quote verbatim. Do not invent facts, paths, ids, or next steps.\n" +
     "- Omit empty sections entirely — never write (none), (not stated), or filler placeholders.\n" +
-    "- Carry forward uncontradicted Goal / Verified facts / Addresses / Landmines / Constraints from the prior notebook.\n" +
+    "- Do NOT rewrite, summarize, or fold the prior notebook — that stack stays on disk; this page will be appended under it.\n" +
+    "- Goal may carry forward from prior context when still true; everything else must be grounded in this turn.\n" +
+    "- This turn: what happened / what was done or decided in this turn (short).\n" +
     "- Ignore [tool …] chips or tool telemetry if any leaked into the reply text.\n" +
     "- Keep each section short (a few lines). No bulk UNIQUE/pad hex.\n" +
     "- Next action: exactly one forward concrete step for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or transcript meta.\n" +
     "- Do not put harness/dogfood labels like Fill #N into Goal or Constraints.\n" +
     "- Do not mention compaction, recycling, or a refreshed session.\n" +
     "- Output only the markdown page, no preamble.\n\n" +
-    (prior
-      ? `Prior notebook:\n${prior}\n\n`
+    (priorClip
+      ? `Prior notebook (context only — do not rewrite):\n${priorClip}\n\n`
       : "Prior notebook:\n(none yet — start from this turn)\n\n") +
     (user ? `User:\n${user}\n\n` : "") +
     "Assistant reply:\n" +
@@ -254,6 +274,137 @@ export function writeTaskNotebook(input: {
   }
 }
 
+/**
+ * APPEND a harvested turn page to live notebook.md with a clear separator.
+ * Never rewrites prior pages. Still records a thin ledger snapshot by default.
+ */
+export function appendTurnPage(input: {
+  botId: string;
+  threadId: string;
+  text: string;
+  userText?: string;
+  taskTitle?: string;
+  baseDir?: string;
+  /** When true (default), also append a thin ledger snapshot for history. */
+  appendLedger?: boolean;
+}): string | null {
+  try {
+    const cleaned = sanitizeNotebookWrite(input.text, input.userText ?? "");
+    if (!cleaned) return null;
+    const dir = ensureTaskMicroDir(input.botId, input.threadId, {
+      baseDir: input.baseDir,
+      taskTitle: input.taskTitle,
+    });
+    if (!dir) return null;
+    const path = notebookPath(input.botId, input.threadId, input.baseDir);
+    let existing = "";
+    if (existsSync(path)) {
+      try {
+        existing = readFileSync(path, "utf8").trimEnd();
+      } catch {
+        existing = "";
+      }
+    }
+    const body = existing
+      ? `${existing}\n\n${TURN_PAGE_SEPARATOR}\n\n${cleaned}\n`
+      : `${cleaned}\n`;
+    writeFileSync(path, body, { mode: 0o600 });
+    if (input.appendLedger !== false) {
+      appendMicroVector({
+        botId: input.botId,
+        threadId: input.threadId,
+        taskTitle: input.taskTitle,
+        baseDir: input.baseDir,
+        entry: {
+          at: new Date().toISOString(),
+          role: "assistant",
+          vector: cleaned,
+        },
+      });
+    }
+    return path;
+  } catch {
+    return null;
+  }
+}
+
+/** Next notebooks/session-NNN.md path under the task dir (001…); timestamp fallback. */
+export function nextNotebookArchivePath(
+  botId: string,
+  threadId: string,
+  baseDir?: string,
+): string | null {
+  try {
+    const dir = notebooksArchiveDir(botId, threadId, baseDir);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    let max = 0;
+    for (const name of readdirSync(dir)) {
+      const m = /^session-(\d+)\.md$/i.exec(name);
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    if (max > 0 || existsSync(dir)) {
+      const n = String(max + 1).padStart(3, "0");
+      return join(dir, `session-${n}.md`);
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return join(dir, `session-${stamp}.md`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After a successful compact: archive live notebook.md → notebooks/session-NNN.md,
+ * then replace live notebook.md with seed = the folded state vector V.
+ * Next settles append under that seed. Never throws.
+ */
+export function archiveAndSeedNotebook(input: {
+  botId: string;
+  threadId: string;
+  /** Folded state vector text (V) that becomes the new live seed. */
+  seedText: string;
+  userText?: string;
+  taskTitle?: string;
+  baseDir?: string;
+}): { archivePath: string | null; notebookPath: string | null } {
+  try {
+    const cleanedSeed = sanitizeNotebookWrite(input.seedText, input.userText ?? "");
+    if (!cleanedSeed) return { archivePath: null, notebookPath: null };
+    const dir = ensureTaskMicroDir(input.botId, input.threadId, {
+      baseDir: input.baseDir,
+      taskTitle: input.taskTitle,
+    });
+    if (!dir) return { archivePath: null, notebookPath: null };
+    const livePath = notebookPath(input.botId, input.threadId, input.baseDir);
+    let archivePath: string | null = null;
+    if (existsSync(livePath)) {
+      try {
+        const live = readFileSync(livePath, "utf8");
+        if (live.trim()) {
+          archivePath = nextNotebookArchivePath(input.botId, input.threadId, input.baseDir);
+          if (archivePath) {
+            writeFileSync(archivePath, live.endsWith("\n") ? live : `${live}\n`, { mode: 0o600 });
+          }
+        }
+      } catch {
+        archivePath = null;
+      }
+    }
+    const seeded = writeTaskNotebook({
+      botId: input.botId,
+      threadId: input.threadId,
+      text: cleanedSeed,
+      userText: input.userText,
+      taskTitle: input.taskTitle,
+      baseDir: input.baseDir,
+      appendLedger: false,
+    });
+    return { archivePath, notebookPath: seeded };
+  } catch {
+    return { archivePath: null, notebookPath: null };
+  }
+}
+
 /** Append one micro note to the thin ledger. Never throws. Returns ledger path or null. */
 export function appendMicroVector(input: {
   botId: string;
@@ -313,7 +464,7 @@ function parseLedgerLines(raw: string): MicroVectorEntry[] {
 function formatEntry(entry: MicroVectorEntry): string {
   if (entry.compacted) return "";
   const page = entry.vector?.trim() || entry.note?.trim();
-  if (page && (entry.vector || /^(Goal|Verified facts|Addresses|Landmines|Constraints|Next action)\b/m.test(page))) {
+  if (page && (entry.vector || /^(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Next action)\b/m.test(page))) {
     return page;
   }
   const bits: string[] = [];
@@ -477,7 +628,7 @@ export async function awaitPendingNotebookUpdate(
 }
 
 /**
- * Remove tasks/<threadId>/ (meta + notebook.md + micro-vectors). Safe if missing.
+ * Remove tasks/<threadId>/ (meta + notebook.md + notebooks/ + micro-vectors). Safe if missing.
  * deleteBot already recursive-wipes workspaceDir(id) which includes tasks/.
  */
 export function deleteTaskMicroVectors(botId: string, threadId: string, baseDir?: string): void {
