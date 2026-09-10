@@ -2,7 +2,7 @@
 // session whose first prompt is the state vector. The local model is not
 // told it restarted — inject the bare vector (no "task state" / restart framing).
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 
@@ -286,26 +286,6 @@ function harvestFilePaths(text: string, includeBare: boolean): string[] {
   return out;
 }
 
-function sameDirectory(a: string, b: string): boolean {
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return resolve(a) === resolve(b);
-  }
-}
-
-/** Git root of `dir` only when `dir` itself is the work tree — not an ancestor. */
-function gitToplevel(dir: string): string | null {
-  const run = spawnSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    timeout: 2_000,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (run.error || run.status !== 0) return null;
-  const top = (run.stdout ?? "").trim();
-  return top ? resolve(top) : null;
-}
-
 const FAIL_HINT =
   /\b(exit\s+[1-9]\d*|no such file|command not found|FAILED\b|Error TS|AssertionError|fails? with)\b/i;
 
@@ -353,8 +333,10 @@ export function readGitWorkingTree(cwd: string | null | undefined): GitWorkingTr
   const dir = existingDirectory(cwd);
   if (!dir) return null;
   try {
-    const top = gitToplevel(dir);
-    if (!top || !sameDirectory(top, dir)) return null;
+    // Require a .git entry in cwd itself so we never walk into an ancestor repo.
+    // Comparing `git rev-parse --show-toplevel` to cwd is brittle on Windows
+    // (drive-letter case, \\?\ prefixes, slash style) and caused false nulls in CI.
+    if (!existsSync(join(dir, ".git"))) return null;
     const porcelain = spawnSync("git", ["-C", dir, "status", "--porcelain"], {
       encoding: "utf8",
       timeout: 2_000,
