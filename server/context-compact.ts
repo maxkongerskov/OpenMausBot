@@ -84,14 +84,108 @@ export function demotePadBlobsInVector(summary: string): string {
   return out.join("\n");
 }
 
+/** Mid-task continuity appended to system when compact/rewrite is active.
+ * No compacted/restarted wording — models echo that and re-greet. */
+export const MID_TASK_CONTINUITY_SYSTEM =
+  "Mid-task: working memory is above. Answer the latest user message. Do not greet, re-acknowledge persona, or ask for a first instruction.";
+
+/** Next bodies that are stalls / meta — replace with a forward line from the live ask. */
+const NEXT_ACTION_BAN =
+  /\b(?:done\.?|wait for next|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|await(?:ing)?(?:\s+the)?\s+next\s+(?:instruction|task|step))\b/i;
+
+const FILL_HASH_LABEL = /\bFill\s*#\d+\b/gi;
+
+const SECTION_HEADING =
+  /^(?:#{1,3}\s*)?(?:\*\*)?(Goal|Verified facts|Addresses|Landmines|Constraints|Next action|Live user|Single next action|Next\b|Recommendation\b)\b/i;
+
+/** Provider-facing live ask after compact (stub pads + soft clip). */
+export function providerLiveAsk(userText: string): string {
+  return clipCompactUserText(stubBulkPadText(userText));
+}
+
+/**
+ * Shared compacted shape for host-proxy rewrite and Grok/openai-chat:
+ * separate user turns for the state vector and the live ask (no mash).
+ */
+export function compactedProviderUserTurns(
+  vector: string,
+  userText: string,
+): { vector: string; liveAsk: string } {
+  return { vector: vector.trim(), liveAsk: providerLiveAsk(userText) };
+}
+
+/** One forward line derived from the live user ask (sanitizer rail). */
+export function forwardNextFromLiveAsk(userText: string): string {
+  const live = stubBulkPadText(userText).trim().replace(/\s+/g, " ");
+  if (!live) return "Continue the current user task from the latest ask.";
+  const clipped = live.length > 220 ? `${live.slice(0, 220).trimEnd()}…` : live;
+  return clipped;
+}
+
+function stripFillLabelsInGoalConstraints(summary: string): string {
+  const lines = summary.split("\n");
+  const out: string[] = [];
+  let section = "";
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const head = trimmed.match(SECTION_HEADING);
+    if (head) {
+      const name = (head[1] ?? "").toLowerCase();
+      if (name.startsWith("goal")) section = "goal";
+      else if (name.startsWith("constraint")) section = "constraints";
+      else if (/^next\b|next action|single next|recommendation/i.test(name)) section = "next";
+      else section = "other";
+      out.push(line);
+      continue;
+    }
+    if ((section === "goal" || section === "constraints") && /\bFill\s*#\d+\b/i.test(trimmed)) {
+      const cleaned = line.replace(/\bFill\s*#\d+\b/gi, "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+$/g, "");
+      if (cleaned.trim()) out.push(cleaned);
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+function replaceBannedNext(summary: string, userText: string): string {
+  const next = extractNextBlock(summary);
+  if (!next) return summary;
+  const body = next
+    .split("\n")
+    .slice(1)
+    .join("\n")
+    .trim();
+  if (!NEXT_ACTION_BAN.test(body) && !NEXT_ACTION_BAN.test(next)) return summary;
+  const forward = forwardNextFromLiveAsk(userText);
+  const replacement = `Next action\n${forward}`;
+  const trimmed = summary.trim();
+  if (trimmed.endsWith(next)) {
+    const head = trimmed.slice(0, trimmed.length - next.length).trimEnd();
+    return head ? `${head}\n\n${replacement}` : replacement;
+  }
+  return `${trimmed.replace(next, "").trimEnd()}\n\n${replacement}`.trim();
+}
+
+/** Post-LLM rail: forward-only Next + strip Fill #N from Goal/Constraints. */
+export function sanitizeForwardOnlyVector(summary: string, userText: string): string {
+  let out = stripFillLabelsInGoalConstraints(summary);
+  out = replaceBannedNext(out, userText);
+  return out.trim();
+}
+
+export function appendMidTaskContinuitySystem(systemText: string): string {
+  const base = systemText.trimEnd();
+  if (!base) return MID_TASK_CONTINUITY_SYSTEM;
+  if (base.includes("Mid-task:") && base.includes("working memory is above")) return base;
+  return `${base} ${MID_TASK_CONTINUITY_SYSTEM}`;
+}
+
+/** @deprecated Prefer compactedProviderUserTurns — kept for tests that assert mash absence of restart framing. */
 export function injectStateVector(summary: string, userText: string): string {
-  const state = summary.trim();
-  // Stub bulk pads first so canaries/paths survive; then soft-cap for the provider.
-  const latest = clipCompactUserText(stubBulkPadText(userText));
-  // Bare vector + live user text — no "Current task state" / restart / instructions
-  // framing (models echo that and narrate the recycle).
-  if (!latest) return state;
-  return [state, "", latest].join("\n");
+  const { vector, liveAsk } = compactedProviderUserTurns(summary, userText);
+  if (!liveAsk) return vector;
+  return [vector, "", liveAsk].join("\n");
 }
 
 export function resolveOutgoingTurn(input: {
@@ -105,10 +199,12 @@ export function resolveOutgoingTurn(input: {
   if (!input.compacted) {
     return { text: input.turnText, resumeCursor: input.resumeCursor, transcript: input.transcript };
   }
+  const { vector, liveAsk } = compactedProviderUserTurns(input.summary, input.userText);
   return {
-    text: injectStateVector(input.summary, input.userText),
+    text: liveAsk || input.userText.trim(),
     resumeCursor: undefined,
-    transcript: [],
+    // Split: [user:vector] then live ask as the current turn (openai-chat adds system).
+    transcript: vector ? [{ role: "user", text: vector }] : [],
   };
 }
 
@@ -673,7 +769,7 @@ function buildSummarizerPrompt(
     ? `PRIMARY TRUTH — Running notebook (micro state vectors since last refresh):\n${microLedger!.trim()}\n\n` +
       "Truth sources: this notebook + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
       "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n" +
-      "Next action must be exactly one forward concrete step the successor should do for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or meta about a missing transcript.\n\n"
+      "Next action must be exactly one forward concrete step the successor should do for the user — never done, wait for next, confirm last turn, provide first/next instruction or task, ask for a first instruction, verify/search for a previous chat turn, an essay from last turn, missing history, or meta about a missing transcript. Never put Fill #N into Goal or Constraints.\n\n"
     : "";
   const userBit = lastTurn?.userText?.trim() ?? "";
   const asstBit = lastTurn?.assistantText?.trim() ?? "";
@@ -877,6 +973,7 @@ export async function compactSession(input: {
     summary = mergeWorkPointers(summary, pointers);
     summary = stripSecretLines(summary);
     summary = clipKeepingNext(mergeLiveUser(summary, input.userText), maxTokens);
+    summary = sanitizeForwardOnlyVector(summary, input.userText);
     return { summary, turnText: injectStateVector(summary, input.userText) };
   }
   const prompt = buildSummarizerPrompt(
@@ -913,6 +1010,7 @@ export async function compactSession(input: {
   summary = mergeWorkPointers(summary, pointers);
   summary = stripSecretLines(summary);
   summary = clipKeepingNext(mergeLiveUser(summary, input.userText), maxTokens);
+  summary = sanitizeForwardOnlyVector(summary, input.userText);
   return { summary, turnText: injectStateVector(summary, input.userText) };
 }
 

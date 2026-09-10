@@ -9,6 +9,7 @@ import {
   messageMatchesCompactNeedle,
   rewriteOpenAIMessages,
 } from "./context-host-proxy.ts";
+import { MID_TASK_CONTINUITY_SYSTEM } from "./context-compact.ts";
 
 describe("rewriteOpenAIMessages", () => {
   const history = [
@@ -20,13 +21,27 @@ describe("rewriteOpenAIMessages", () => {
 
   it("keeps the bot/engine history out of the provider prompt", () => {
     const rewritten = rewriteOpenAIMessages(history, "Goal\nopen /secret/vault", "what is the vault path?");
-    expect(rewritten[0]).toEqual({ role: "system", content: "You are Wren." });
+    expect(rewritten[0]?.role).toBe("system");
+    expect(String(rewritten[0]?.content)).toContain("You are Wren.");
+    expect(String(rewritten[0]?.content)).toContain(MID_TASK_CONTINUITY_SYSTEM);
     expect(rewritten[1]).toEqual({
       role: "user",
       content: "Goal\nopen /secret/vault",
     });
     expect(rewritten.at(-1)).toEqual({ role: "user", content: "what is the vault path?" });
     expect(rewritten.some((m) => String(m.content).includes("billing"))).toBe(false);
+  });
+
+  it("splits as [system][user:vector][user:live ask] like the Grok compacted path", () => {
+    const rewritten = rewriteOpenAIMessages(
+      [{ role: "system", content: "You are Wren." }, { role: "user", content: "ancient" }, { role: "user", content: "live ask now" }],
+      "Goal\nvault\nNext action\nreply canary",
+      "live ask now",
+    );
+    expect(rewritten.map((m) => m.role)).toEqual(["system", "user", "user"]);
+    expect(rewritten[1]?.content).toBe("Goal\nvault\nNext action\nreply canary");
+    expect(rewritten[2]?.content).toBe("live ask now");
+    expect(String(rewritten[0]?.content)).toContain("Mid-task:");
   });
 
   it("does not treat a short later prompt as the compact turn because those words appeared in it", () => {
@@ -189,7 +204,9 @@ describe("HostProxy", () => {
       }),
     });
     expect(response.ok).toBe(true);
-    expect(seen.messages?.map((m) => m.content)).toEqual(["Goal\nvault", "continue"]);
+    expect(seen.messages?.map((m) => m.role)).toEqual(["system", "user", "user"]);
+    expect(seen.messages?.[0]?.content).toContain(MID_TASK_CONTINUITY_SYSTEM);
+    expect(seen.messages?.slice(1).map((m) => m.content)).toEqual(["Goal\nvault", "continue"]);
     expect(seen.messages?.some((m) => m.content === "ancient history")).toBe(false);
     await proxy.close();
   });
