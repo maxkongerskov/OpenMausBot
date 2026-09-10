@@ -66,7 +66,7 @@ export function stubBulkPadText(text: string): string {
   return bits.join("\n");
 }
 
-/** Strip UNIQUE/pad lines from vector sections so Goal/Next stay actionable. */
+/** Strip UNIQUE/pad lines from vector sections so Goal/Open stay actionable. */
 export function demotePadBlobsInVector(summary: string): string {
   const lines = summary.split("\n");
   const out: string[] = [];
@@ -76,7 +76,7 @@ export function demotePadBlobsInVector(summary: string): string {
       out.push(line);
       continue;
     }
-    if (/^(Goal|Verified facts|Addresses|Landmines|Constraints|Next action|Live user)\b/i.test(trimmed)) {
+    if (/^(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Open|Next action|Live user)\b/i.test(trimmed)) {
       out.push(line);
       continue;
     }
@@ -94,14 +94,14 @@ export function demotePadBlobsInVector(summary: string): string {
 export const MID_TASK_CONTINUITY_SYSTEM =
   "Mid-task: working memory is above. Answer the latest user message. Do not greet, re-acknowledge persona, or ask for a first instruction.";
 
-/** Next bodies that are stalls / meta — replace with a forward line from the live ask. */
+/** Open/Next bodies that are stalls / soft-park / meta — replace with a forward line from the live ask. */
 const NEXT_ACTION_BAN =
-  /\b(?:done\.?|wait for next|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|await(?:ing)?(?:\s+the)?\s+next\s+(?:instruction|task|step))\b/i;
+  /\b(?:done\.?|wait for next|provide(?:\s+a)?\s+prompt|await(?:ing)?(?:\s+the)?\s+user|await(?:ing)?(?:\s+the)?\s+next\s+(?:instruction|task|step|message|prompt)|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|wait(?:ing)?(?:\s+for)?(?:\s+the)?\s+(?:next|user)(?:\s+(?:instruction|task|step|message|prompt))?)\b/i;
 
 const FILL_HASH_LABEL = /\bFill\s*#\d+\b/gi;
 
 const SECTION_HEADING =
-  /^(?:#{1,3}\s*)?(?:\*\*)?(Goal|Verified facts|Addresses|Landmines|Constraints|Next action|Live user|Single next action|Next\b|Recommendation\b)\b/i;
+  /^(?:#{1,3}\s*)?(?:\*\*)?(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Open|Next action|Live user|Single next action|Next\b|Recommendation\b)\b/i;
 
 /** Provider-facing live ask after compact (stub pads + soft clip). */
 export function providerLiveAsk(userText: string): string {
@@ -138,7 +138,7 @@ function stripFillLabelsInGoalConstraints(summary: string): string {
       const name = (head[1] ?? "").toLowerCase();
       if (name.startsWith("goal")) section = "goal";
       else if (name.startsWith("constraint")) section = "constraints";
-      else if (/^next\b|next action|single next|recommendation/i.test(name)) section = "next";
+      else if (/^open\b|^next\b|next action|single next|recommendation/i.test(name)) section = "next";
       else section = "other";
       out.push(line);
       continue;
@@ -164,7 +164,7 @@ function replaceBannedNext(summary: string, userText: string): string {
     .trim();
   if (!NEXT_ACTION_BAN.test(body) && !NEXT_ACTION_BAN.test(next)) return summary;
   const forward = forwardNextFromLiveAsk(userText);
-  const replacement = `Next action\n${forward}`;
+  const replacement = `Open\n${forward}`;
   const trimmed = summary.trim();
   if (trimmed.endsWith(next)) {
     const head = trimmed.slice(0, trimmed.length - next.length).trimEnd();
@@ -173,7 +173,8 @@ function replaceBannedNext(summary: string, userText: string): string {
   return `${trimmed.replace(next, "").trimEnd()}\n\n${replacement}`.trim();
 }
 
-/** Post-LLM rail: forward-only Next + strip Fill #N from Goal/Constraints. */
+/** Post-LLM rail: forward-only Open/Next + strip Fill #N from Goal/Constraints.
+ * Understands legacy Next action headings; banned soft-park rewrites to Open. */
 export function sanitizeForwardOnlyVector(summary: string, userText: string): string {
   let out = stripFillLabelsInGoalConstraints(summary);
   out = replaceBannedNext(out, userText);
@@ -469,12 +470,14 @@ export function looksLikeHandoff(text: string): boolean {
   const t = text.trim();
   if (t.length < 80) return false;
   const hasGoal = /^(?:#{1,3}\s*)?Goal\b/mi.test(t);
-  const hasNext = /^(?:#{1,3}\s*)?(?:Next action|Single next action|Next\b|Recommendation\b)/mi.test(t);
-  return hasGoal && hasNext;
+  const hasOpenOrNext =
+    /^(?:#{1,3}\s*)?(?:Open\b|Next action|Single next action|Next\b|Recommendation\b)/mi.test(t);
+  return hasGoal && hasOpenOrNext;
 }
 
+/** Last Open / legacy Next / Recommendation block — must survive a budget clip. */
 const NEXT_HEADING =
-  /^(?:#{1,3}\s*)?(?:\*\*)?(?:Next action|Single next action|Next\b|Recommendation\b)/im;
+  /^(?:#{1,3}\s*)?(?:\*\*)?(?:Open\b|Next action|Single next action|Next\b|Recommendation\b)/im;
 
 const LIVE_USER_SKIP = /^(continue|keep going|go on|go|ok|status|\.|…)$/i;
 
@@ -495,7 +498,7 @@ export function mergeLiveUser(summary: string, userText: string): string {
   return `${trimmed}\n\n${block}`;
 }
 
-/** Last Next/Recommendation block — must survive a budget clip. */
+/** Last Open / legacy Next / Recommendation block — must survive a budget clip. */
 export function extractNextBlock(text: string): string {
   const lines = text.split("\n");
   let start = -1;
@@ -707,25 +710,16 @@ function extractiveFallback(
             .slice(-4)
             .map((turn) => `- ${turn.text.replace(/\s+/g, " ").trim().slice(0, 240)}`)
             .join("\n") || "(none)";
-  const sections = [
-    "Goal",
-    firstUser.slice(0, 400) || "(not stated)",
-    "",
-    "Verified facts",
-    facts,
-    "",
-    "Addresses",
-    addrs.length ? addrs.join("\n") : "(none quoted)",
-    "",
-    "Landmines",
-    "(none recorded)",
-    "",
-    "Constraints",
-    /\bconstraints?\b/i.test(blob) ? "(see seed / transcript)" : "(none recorded)",
-    "",
-    "Next action",
-    lastUser || lastAssistant.slice(0, 400) || "(continue the current task)",
-  ];
+  const sections: string[] = [];
+  const goalBody = firstUser.slice(0, 400).trim();
+  if (goalBody) sections.push("Goal", goalBody, "");
+  const factsBody = typeof facts === "string" ? facts.trim() : "";
+  if (factsBody && factsBody !== "(none)") sections.push("Verified facts", factsBody, "");
+  if (addrs.length) sections.push("Addresses", addrs.join("\n"), "");
+  if (/\bconstraints?\b/i.test(blob)) sections.push("Constraints", "(see seed / transcript)", "");
+  const openBody = (lastUser || lastAssistant.slice(0, 400)).trim();
+  if (openBody) sections.push("Open", openBody);
+  while (sections.length && !sections[sections.length - 1]) sections.pop();
   let text = sections.join("\n");
   const budgetChars = maxTokens * 4;
   if (text.length > budgetChars) text = `${text.slice(0, Math.max(0, budgetChars - 1)).trimEnd()}…`;
@@ -743,7 +737,7 @@ function buildHandoffDistillPrompt(
     : "";
   return (
     `${extractionPrompt}\n\n` +
-    `Token budget for the output: ${maxTokens}. Next action must fit inside that budget.\n\n` +
+    `Token budget for the output: ${maxTokens}. Open (when present) must fit inside that budget.\n\n` +
     memoryBlock +
     "Source (this disk handoff is the truth; do not invent; do not use a chat transcript):\n" +
     handoff.trim()
@@ -778,7 +772,7 @@ function buildSummarizerPrompt(
       "Prefer length and fidelity over aggressive compression (tens of k characters is OK; soft host cap only).\n" +
       "Truth sources: this notebook stack + the Last turn below. Do not promote unrelated bot MEMORY canaries into Verified facts when a notebook is present.\n" +
       "Merge rule: uncontradicted Verified facts / Addresses / Landmines from the prior vector and this notebook must not be dropped.\n" +
-      "Next action must be exactly one forward concrete step the successor should do for the user — never done, wait for next, confirm last turn, provide first/next instruction or task, ask for a first instruction, verify/search for a previous chat turn, an essay from last turn, missing history, or meta about a missing transcript. Never put Fill #N into Goal or Constraints.\n\n"
+      "Include This turn when useful (last move that mattered). Open: unfinished work or a real pending decision — omit Open if nothing is open. Never soft-park (provide a prompt, await user, wait for next, done, confirm last turn, provide first/next instruction, ask for a first instruction, verify/search for a previous chat turn, essay from last turn, or transcript meta). Never put Fill #N into Goal or Constraints.\n\n"
     : "";
   const userBit = lastTurn?.userText?.trim() ?? "";
   const asstBit = lastTurn?.assistantText?.trim() ?? "";

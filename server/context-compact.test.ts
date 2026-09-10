@@ -58,18 +58,23 @@ describe("injectStateVector", () => {
     );
   });
 
-  it("DEFAULT_EXTRACTION_PROMPT forbids confirm-previous-turn Next action", () => {
-    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/never set next action to done/);
+  it("DEFAULT_EXTRACTION_PROMPT prefers Open and bans soft-park", () => {
+    expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/\nOpen\n/);
+    expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/This turn/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/omit open entirely when nothing is open/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/never soft-park/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/provide a prompt/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/await user/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/wait for next/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/confirm last turn/);
     expect(DEFAULT_EXTRACTION_PROMPT).toMatch(/Fill #N/);
-    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/forward concrete step/);
-    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/wait for next/);
     expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/goal or constraints/);
+    expect(DEFAULT_EXTRACTION_PROMPT.toLowerCase()).toMatch(/omit empty sections/);
   });
 });
 
 describe("sanitizeForwardOnlyVector", () => {
-  it("replaces banned Next bodies with one forward line from the live ask", () => {
+  it("replaces banned Open/Next soft-park with one forward line from the live ask", () => {
     const summary = [
       "Goal",
       "Keep chatting Fill #3 harness",
@@ -82,14 +87,28 @@ describe("sanitizeForwardOnlyVector", () => {
     expect(cleaned).not.toMatch(/Fill\s*#\d+/i);
     expect(cleaned).toContain("Goal");
     expect(cleaned).toContain("Keep chatting");
-    expect(cleaned).toContain("Next action");
+    expect(cleaned).toContain("Open");
     expect(cleaned.toLowerCase()).not.toMatch(/wait for next/);
     expect(cleaned).toContain(forwardNextFromLiveAsk("Reply with CANARY_OMB_TAIL_9C2E then stop."));
   });
 
-  it("leaves a forward Next alone", () => {
+  it("sanitizes soft-park Open (provide a prompt / await user)", () => {
+    const summary = "Goal\nship\nOpen\nawait user / provide a prompt";
+    const cleaned = sanitizeForwardOnlyVector(summary, "run the hist sheet checks");
+    expect(cleaned).toContain("Open");
+    expect(cleaned.toLowerCase()).not.toMatch(/await user|provide a prompt/);
+    expect(cleaned).toContain(forwardNextFromLiveAsk("run the hist sheet checks"));
+  });
+
+  it("leaves a forward Next alone (legacy heading)", () => {
     const summary = "Goal\nship\nNext action\nedit src/auth.ts";
     expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("edit src/auth.ts");
+    expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("Next action");
+  });
+
+  it("leaves a forward Open alone", () => {
+    const summary = "Goal\nship\nOpen\nedit src/auth.ts";
+    expect(sanitizeForwardOnlyVector(summary, "keep going")).toContain("Open\nedit src/auth.ts");
   });
 
   it("compactsProviderUserTurns splits vector and live ask", () => {
@@ -209,7 +228,8 @@ describe("compactSession", () => {
       maxTokens: 512,
     });
     expect(result.summary).toContain("Goal");
-    expect(result.summary).toContain("Next action");
+    expect(result.summary).toContain("Open");
+    expect(result.summary).not.toMatch(/\(none\)/);
     expect(result.turnText).toContain("keep going");
     expect(result.summary.toLowerCase()).not.toMatch(/you restarted|joining this conversation/);
   });
@@ -407,6 +427,15 @@ describe("universal compact seed", () => {
       "edit src/auth.ts",
     ].join("\n");
     expect(looksLikeHandoff(coding)).toBe(true);
+    const withOpen = [
+      "Goal",
+      "Polish Keep chatting clarity schema for universal chat and coding",
+      "Verified facts",
+      "Open replaces Next action; omit when nothing is open",
+      "Open",
+      "dogfood ORBIT-HIST-7 on Long Run after package:mac",
+    ].join("\n");
+    expect(looksLikeHandoff(withOpen)).toBe(true);
     expect(looksLikeHandoff("# Memory\n- Goal: strip the copy\n- Next: keep going")).toBe(false);
   });
 

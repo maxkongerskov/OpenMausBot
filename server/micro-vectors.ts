@@ -161,9 +161,9 @@ function writeTaskMeta(
 
 /**
  * Side-LLM prompt: harvest a rich turn page from this turn (append-only).
- * Headings: Goal, This turn, Addresses, Verified facts, Landmines (only if
- * present), Next action. Prior notebook is continuity context only — never
- * rewrite or fold it into this page.
+ * Headings: Goal, This turn (required), Verified facts, Addresses / Landmines /
+ * Constraints / Open only when real. Open replaces Next — omit if nothing open.
+ * Prior notebook is continuity context only — never rewrite or fold it into this page.
  */
 export function buildMicroNotebookPrompt(input: {
   priorNotebook?: string;
@@ -178,17 +178,17 @@ export function buildMicroNotebookPrompt(input: {
   return (
     "Harvest a rich turn page from this turn's user message and assistant reply.\n" +
     "Output a single dense markdown page for THIS turn only. Prefer these headings when they have content:\n" +
-    "Goal\nThis turn\nAddresses\nVerified facts\nLandmines\nNext action\n" +
-    "Include Landmines only when this turn (or clearly carried Goal context) actually states a landmine.\n" +
+    "Goal\nThis turn\nVerified facts\nAddresses\nLandmines\nConstraints\nOpen\n" +
+    "This turn is required. Include Addresses / Landmines / Constraints / Open only when real.\n" +
     "Rules:\n" +
-    "- Quote verbatim. Do not invent facts, paths, ids, or next steps.\n" +
+    "- Quote verbatim. Do not invent facts, paths, ids, or open items.\n" +
     "- Omit empty sections entirely — never write (none), (not stated), or filler placeholders.\n" +
     "- Do NOT rewrite, summarize, or fold the prior notebook — that stack stays on disk; this page will be appended under it.\n" +
     "- Goal may carry forward from prior context when still true; everything else must be grounded in this turn.\n" +
-    "- This turn: what happened / what was done or decided in this turn (short).\n" +
+    "- This turn: what happened / what was done or decided in this turn (short) — required on every micro turn page.\n" +
     "- Ignore [tool …] chips or tool telemetry if any leaked into the reply text.\n" +
     "- Keep each section short (a few lines). No bulk UNIQUE/pad hex.\n" +
-    "- Next action: exactly one forward concrete step for the user — never confirm/verify/search for a previous chat turn, an essay from last turn, missing history, or transcript meta.\n" +
+    "- Open: unfinished work or a real pending decision — reference only, not a fake prompt. Omit Open if nothing is open. Never soft-park (provide a prompt, await user, wait for next, empty waiting, confirm/verify/search for a previous chat turn, essay from last turn, or transcript meta).\n" +
     "- Do not put harness/dogfood labels like Fill #N into Goal or Constraints.\n" +
     "- Do not mention compaction, recycling, or a refreshed session.\n" +
     "- Output only the markdown page, no preamble.\n\n" +
@@ -203,7 +203,7 @@ export function buildMicroNotebookPrompt(input: {
 
 /**
  * Validate side-LLM notebook markdown. Returns cleaned text or null if empty.
- * Applies the same forward-only Next ban + Fill #N strip as compact.
+ * Applies the same forward-only Open/Next ban + Fill #N strip as compact.
  */
 export function sanitizeNotebookWrite(
   raw: string | null | undefined,
@@ -464,7 +464,7 @@ function parseLedgerLines(raw: string): MicroVectorEntry[] {
 function formatEntry(entry: MicroVectorEntry): string {
   if (entry.compacted) return "";
   const page = entry.vector?.trim() || entry.note?.trim();
-  if (page && (entry.vector || /^(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Next action)\b/m.test(page))) {
+  if (page && (entry.vector || /^(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Open|Next action)\b/m.test(page))) {
     return page;
   }
   const bits: string[] = [];
@@ -473,7 +473,7 @@ function formatEntry(entry: MicroVectorEntry): string {
   if (entry.addresses?.length) bits.push(`Addresses\n${entry.addresses.join("\n")}`);
   if (entry.landmines?.length) bits.push(`Landmines\n${entry.landmines.join("\n")}`);
   if (entry.constraints?.length) bits.push(`Constraints\n${entry.constraints.join("\n")}`);
-  if (entry.next) bits.push(`Next action\n${entry.next}`);
+  if (entry.next) bits.push(`Open\n${entry.next}`);
   if (entry.note) bits.push(entry.note);
   return bits.join("\n");
 }
