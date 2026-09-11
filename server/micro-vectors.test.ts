@@ -10,6 +10,7 @@ import {
   awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   deleteTaskMicroVectors,
+  gateHarvestPage,
   markMicroCompacted,
   microLedgerPath,
   notebookPath,
@@ -414,5 +415,67 @@ describe("disabled callers", () => {
     });
     expect(path).toBeTruthy();
     expect(readTaskNotebook("b1", "t1", { baseDir: base })).toContain("still writable");
+  });
+});
+
+describe("gateHarvestPage", () => {
+  it("repairs coding page missing Addresses from path in user text", () => {
+    const page =
+      "Goal\nFix store\nThis turn\npatched the store\nVerified facts\nstore broke\nOpen\nrun tests";
+    const out = gateHarvestPage(page, "please edit server/store.ts");
+    expect(out).toBeTruthy();
+    expect(out!).toMatch(/Addresses/i);
+    expect(out!).toContain("server/store.ts");
+  });
+
+  it("keeps verbs-only coding page without requiring Addresses", () => {
+    const page =
+      "Goal\nImprove UX\nThis turn\ndiscussed approach\nOpen\nsketch the flow";
+    const out = gateHarvestPage(page, "please implement the refactor carefully");
+    expect(out).toBeTruthy();
+    expect(out!).not.toMatch(/^Addresses\s*$/m);
+  });
+
+  it("ensures Open when mid-task page lacks Open/Next", () => {
+    const page = "Goal\nShip keep chatting\nThis turn\nwrote harvest gate\nVerified facts\ngate exists";
+    const out = gateHarvestPage(page, "wire Addresses repair into append");
+    expect(out).toBeTruthy();
+    expect(out!).toMatch(/^Open$/m);
+    expect(out!.toLowerCase()).toContain("wire addresses repair");
+  });
+
+  it("rewrites soft-park Open via sanitizeNotebookWrite", () => {
+    const raw =
+      "Goal\nContinue task\nThis turn\nwaited\nOpen\nAwaiting the user for the next instruction";
+    const out = sanitizeNotebookWrite(raw, "finish the Addresses gate tests");
+    expect(out).toBeTruthy();
+    expect(out!.toLowerCase()).not.toMatch(/awaiting the user/);
+    expect(out!).toMatch(/Open/i);
+    expect(out!.toLowerCase()).toContain("finish the addresses gate");
+  });
+
+  it("allows non-coding chatty page without Addresses", () => {
+    const page =
+      "Goal\nCatch up\nThis turn\ntalked about weekend plans\nVerified facts\nrain tomorrow\nOpen\npick a movie";
+    const out = gateHarvestPage(page, "how was your weekend?");
+    expect(out).toBeTruthy();
+    expect(out!).not.toMatch(/Addresses/i);
+  });
+
+  it("appendTurnPage skips rejected page when repair cannot fill Addresses", () => {
+    // Concrete hex in user ask but page has empty Addresses heading that merge
+    // should fill — happy path append still works after repair.
+    const base = tmp();
+    const path = appendTurnPage({
+      botId: "b1",
+      threadId: "t-gate",
+      baseDir: base,
+      userText: "look at 0xCafeBabe in the dump",
+      text: "Goal\nDebug VA\nThis turn\ninspected dump\nAddresses\n(none)\nOpen\nkeep digging",
+      appendLedger: false,
+    });
+    expect(path).toBeTruthy();
+    const raw = readFileSync(notebookPath("b1", "t-gate", base), "utf8");
+    expect(raw).toMatch(/0xCafeBabe/i);
   });
 });

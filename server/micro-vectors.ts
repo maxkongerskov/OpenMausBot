@@ -25,7 +25,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { sanitizeForwardOnlyVector } from "./context-compact.ts";
+import {
+  forwardNextFromLiveAsk,
+  harvestAddresses,
+  harvestPathsFromText,
+  mergeHarvestedAddresses,
+  sanitizeForwardOnlyVector,
+} from "./context-compact.ts";
 import { workspaceDir } from "./workspace.ts";
 
 export const TASKS_DIRNAME = "tasks";
@@ -213,6 +219,101 @@ export function buildMicroNotebookPrompt(input: {
   );
 }
 
+
+const CODING_VERB =
+  /\b(edit|patch|implement|refactor|fix|commit|diff|typecheck|lint|compile|deploy|merge)\b/i;
+const PATH_LIKE =
+  /(?:\/[\w.-]+){2,}|\b[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|swift|java|kt|rb|md|json|yml|yaml)\b/i;
+const GATE_SECTION_HEAD =
+  /^(?:#{1,3}\s*)?(?:\*\*)?(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Open|Next action|Live user|Single next action|Next\b|Recommendation\b)\b/i;
+
+function gateSectionBody(page: string, name: RegExp): string | null {
+  const lines = page.split("\n");
+  let capturing = false;
+  let saw = false;
+  const buf: string[] = [];
+  for (const line of lines) {
+    const head = line.trim().match(GATE_SECTION_HEAD);
+    if (head) {
+      if (capturing) break;
+      capturing = name.test(head[1] ?? "");
+      if (capturing) saw = true;
+      continue;
+    }
+    if (capturing) buf.push(line);
+  }
+  if (!saw) return null;
+  return buf.join("\n").trim();
+}
+
+function addressesMeaningful(body: string | null): boolean {
+  if (body === null) return false;
+  const t = body.trim();
+  if (!t) return false;
+  if (/^\(none(?:\s+quoted)?\)$/i.test(t)) return false;
+  if (/^none$/i.test(t)) return false;
+  return true;
+}
+
+function pageLooksMidTask(page: string): boolean {
+  const goal = gateSectionBody(page, /^Goal$/i);
+  const turn = gateSectionBody(page, /^This turn$/i);
+  return Boolean((goal && goal.length >= 3) || (turn && turn.length >= 3));
+}
+
+function pageHasOpenOrNext(page: string): boolean {
+  return /^(?:#{1,3}\s*)?(?:\*\*)?(Open\b|Next action|Single next action|Next\b|Recommendation\b)/mi.test(
+    page,
+  );
+}
+
+/**
+ * M2 harvest gates: repair/reject coding pages missing Addresses; ensure Open mid-task.
+ * Returns cleaned page or null to skip append (reject).
+ */
+export function gateHarvestPage(
+  page: string,
+  userText = "",
+  opts?: { assistantText?: string },
+): string | null {
+  let text = (page ?? "").trim();
+  if (!text || text.length < 8) return null;
+
+  const blobs: Array<string | undefined> = [userText, text, opts?.assistantText];
+  const paths = harvestPathsFromText(...blobs);
+  const hex = harvestAddresses(...blobs);
+  const pointers = [...paths];
+  for (const h of hex) {
+    if (!pointers.some((p) => p.toLowerCase() === h.toLowerCase())) pointers.push(h);
+  }
+  const codingBlob = `${userText}\n${text}\n${opts?.assistantText ?? ""}`;
+  const coding =
+    pointers.length > 0 ||
+    (CODING_VERB.test(codingBlob) && PATH_LIKE.test(codingBlob));
+
+  let addrBody = gateSectionBody(text, /^Addresses$/i);
+  if (coding && pointers.length > 0 && !addressesMeaningful(addrBody)) {
+    text = mergeHarvestedAddresses(text, pointers);
+    addrBody = gateSectionBody(text, /^Addresses$/i);
+    if (!addressesMeaningful(addrBody)) {
+      // merge may skip pointers that appear elsewhere on the page — force Addresses.
+      text = `${text.trim()}\n\nAddresses\n${pointers.join("\n")}`;
+      addrBody = gateSectionBody(text, /^Addresses$/i);
+    }
+  }
+
+  if (coding && pointers.length > 0 && !addressesMeaningful(addrBody)) {
+    return null;
+  }
+
+  if (pageLooksMidTask(text) && !pageHasOpenOrNext(text)) {
+    text = `${text.trim()}\n\nOpen\n${forwardNextFromLiveAsk(userText)}`;
+  }
+
+  const out = text.trim();
+  return out.length >= 8 ? out : null;
+}
+
 /**
  * Validate side-LLM notebook markdown. Returns cleaned text or null if empty.
  * Applies the same forward-only Open/Next ban + Fill #N strip as compact.
@@ -225,7 +326,7 @@ export function sanitizeNotebookWrite(
   if (!text || text.length < 8) return null;
   const cleaned = sanitizeForwardOnlyVector(text, userText).trim();
   if (!cleaned || cleaned.length < 8) return null;
-  return cleaned;
+  return gateHarvestPage(cleaned, userText);
 }
 
 /**

@@ -429,6 +429,23 @@ function harvestFilePaths(text: string, includeBare: boolean): string[] {
   return out;
 }
 
+/** Paths from free text (bare + nested). Used by harvest gates / bootstrap repair. */
+export function harvestPathsFromText(...blobs: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const blob of blobs) {
+    if (!blob) continue;
+    for (const path of harvestFilePaths(blob, true)) {
+      const key = path.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(path);
+      if (out.length >= 40) return out;
+    }
+  }
+  return out;
+}
+
 const FAIL_HINT =
   /\b(exit\s+[1-9]\d*|no such file|command not found|FAILED\b|Error TS|AssertionError|fails? with)\b/i;
 
