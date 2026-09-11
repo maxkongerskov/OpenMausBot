@@ -206,12 +206,15 @@ export function resolveOutgoingTurn(input: {
   if (!input.compacted) {
     return { text: input.turnText, resumeCursor: input.resumeCursor, transcript: input.transcript };
   }
-  const { vector, liveAsk } = compactedProviderUserTurns(input.summary, input.userText);
+  // Every harness must see the vector on the main user message (`text`).
+  // Claude Code ignores `transcript`; openai-chat would double-count if we
+  // also put the vector there — so compacted turns carry vector+ask in text
+  // only. Host-proxy rewrite remains a second belt for inject drivers.
+  const text = injectStateVector(input.summary, input.userText).trim() || input.userText.trim();
   return {
-    text: liveAsk || input.userText.trim(),
+    text,
     resumeCursor: undefined,
-    // Split: [user:vector] then live ask as the current turn (openai-chat adds system).
-    transcript: vector ? [{ role: "user", text: vector }] : [],
+    transcript: [],
   };
 }
 

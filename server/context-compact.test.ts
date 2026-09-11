@@ -189,7 +189,7 @@ describe("bulk pad demotion", () => {
 
 
 describe("resolveOutgoingTurn", () => {
-  it("drops the native cursor and splits vector/live ask when compacted", () => {
+  it("drops the native cursor and puts vector+ask on the main text when compacted", () => {
     const out = resolveOutgoingTurn({
       compacted: true,
       summary: "Goal\nship it\nNext action\nopen src/auth.ts",
@@ -199,12 +199,10 @@ describe("resolveOutgoingTurn", () => {
       transcript,
     });
     expect(out.resumeCursor).toBeUndefined();
-    expect(out.transcript).toEqual([
-      { role: "user", text: "Goal\nship it\nNext action\nopen src/auth.ts" },
-    ]);
-    expect(out.text).toBe("continue");
+    expect(out.transcript).toEqual([]);
+    expect(out.text).toContain("Goal\nship it");
+    expect(out.text).toContain("continue");
     expect(out.text).not.toContain("joining this conversation");
-    expect(out.text).not.toContain("Goal\nship it");
   });
 
   it("passes a live session through untouched", () => {
