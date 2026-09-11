@@ -1,7 +1,7 @@
 // Compaction recycle, end to end: a local-ceiling override forces a
-// provider-side refresh. The OpenMausBot / ACP session is kept (one
-// session/new, then session/load). The state vector is for the host, not
-// the ACP prompt.
+// provider-side refresh. Compact clears the ACP resume cursor so the host
+// session actually resets (second session/new). UI chat stays; the state
+// vector is for the host, not the ACP prompt.
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -90,7 +90,7 @@ posixOnly("session compaction recycle (fake ACP)", () => {
   });
 
   it(
-    "keeps the engine session and records a compaction vector for the provider",
+    "resets the engine session and records a compaction vector for the provider",
     async () => {
       const created = (await api("POST", "/api/bots")).body.bot;
       await api("PATCH", `/api/bots/${created.id}`, {
@@ -119,8 +119,8 @@ posixOnly("session compaction recycle (fake ACP)", () => {
         .filter(Boolean)
         .map((line) => JSON.parse(line));
       const methods = records.filter((e) => e.dir === "out").map((e) => e.msg?.method);
-      expect(methods.filter((m: string) => m === "session/new")).toHaveLength(1);
-      expect(methods.filter((m: string) => m === "session/load" || m === "session/resume").length).toBeGreaterThanOrEqual(1);
+      // First turn opens the session; compact clears resume → second session/new.
+      expect(methods.filter((m: string) => m === "session/new")).toHaveLength(2);
 
       const prompts = records
         .filter((e) => e.dir === "out" && e.msg?.method === "session/prompt")
