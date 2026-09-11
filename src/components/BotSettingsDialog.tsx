@@ -36,6 +36,8 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   const derived = useBotSettingsDerived(bot);
   const dialogRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
+  // Clicking the open row again collapses it; picking another row expands that one.
+  const [collapsed, setCollapsed] = useState(false);
   const q = query.trim().toLowerCase();
   const visibleSections = BOT_SECTIONS.filter((entry) => sectionMatches(entry, q));
 
@@ -178,7 +180,10 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
     const visible = BOT_SECTIONS.filter((entry) => sectionMatches(entry, q));
     if (visible.some((entry) => entry.id === section)) return;
     const first = visible[0];
-    if (first) dispatch({ type: "toggleSettings", open: true, section: first.id });
+    if (first) {
+      setCollapsed(false);
+      dispatch({ type: "toggleSettings", open: true, section: first.id });
+    }
   }, [dispatch, q, section]);
 
   useEffect(() => {
@@ -228,7 +233,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
             refreshError={overview !== null && overviewError}
             prompt={prompt}
             promptError={promptError}
-            onOpen={(target) => dispatch({ type: "toggleSettings", open: true, section: target })}
+            onOpen={(target) => { setCollapsed(false); dispatch({ type: "toggleSettings", open: true, section: target }); }}
             onSetup={derived.canCoordinate && !bot.busy ? () => {
               dispatch({ type: "toggleSettings", open: false });
               dispatch({ type: "send", botId: bot.id, text: "/setup", threadId: bot.threadId });
@@ -341,7 +346,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
             const { id, label, icon: Icon } = entry;
             const matched = sectionMatches(entry, q);
             if (!matched && id !== "memory") return null;
-            const open = section === id;
+            const open = !collapsed && section === id;
             return (
               <div
                 key={id}
@@ -350,7 +355,14 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
               >
                 <button
                   type="button"
-                  onClick={() => dispatch({ type: "toggleSettings", open: true, section: id })}
+                  onClick={() => {
+                    if (section === id && !collapsed) {
+                      setCollapsed(true);
+                      return;
+                    }
+                    setCollapsed(false);
+                    dispatch({ type: "toggleSettings", open: true, section: id });
+                  }}
                   aria-expanded={open}
                   className={cn(
                     "flex w-full shrink-0 items-center gap-2.5 px-4 py-2.5 text-left text-[14px]",
