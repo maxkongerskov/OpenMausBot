@@ -217,6 +217,7 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { decodeInjectId } from "./drivers/local-inject.ts";
 import { AUTO_COMPACT_AROUND_TOKENS, advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
 import {
+  appendBootstrapHybridContinuitySystem,
   appendMidTaskContinuitySystem,
   clipCompactUserText,
   collectCompactSeedDirs,
@@ -245,9 +246,11 @@ import {
 } from "./micro-vectors.ts";
 import {
   attachRetrievedChunks,
+  attachVFallback,
   buildNotebookCatalogHints,
   keywordRetrieve,
   readLatestNotebookArchive,
+  scoreBootstrapConfidence,
 } from "./bootstrap-rag.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, usersAfterCompaction, vectorBudget } from "./context-rebuild.ts";
@@ -4672,6 +4675,7 @@ async function startTurn(
         transcript,
       });
       const priorRewrite = hostProxy.get(threadId);
+      let bootstrapHybridAddresses = false;
       if (compactThisTurn) {
         if (microVectorsEnabled(cfg)) {
           await awaitPendingNotebookUpdate(bot.id, threadId);
@@ -4699,6 +4703,7 @@ async function startTurn(
             catalogHints,
           });
           const pins = latestBootstrapSections(notebookText);
+          bootstrapHybridAddresses = Boolean((pins.addresses ?? "").trim());
           const retrieveQuery = [
             userPrompt,
             pins.open ?? "",
@@ -4718,6 +4723,19 @@ async function startTurn(
             topK: 3,
           });
           summary = attachRetrievedChunks(summary, hits);
+          const confidence = scoreBootstrapConfidence({
+            pack: summary,
+            pins,
+            hits,
+            notebookChars: notebookText.length,
+          });
+          const fallback = attachVFallback(summary, confidence, notebookText, userPrompt);
+          if (fallback.path !== "bootstrap") {
+            console.info(`[keep-chatting] bootstrap V-fallback ${fallback.logged}`);
+          } else {
+            console.info(`[keep-chatting] bootstrap path ${fallback.logged}`);
+          }
+          summary = fallback.summary;
           result = { summary, turnText: injectStateVector(summary, userPrompt) };
         } else {
           result = await compactSession({
@@ -4852,7 +4870,13 @@ async function startTurn(
         resumeCursor: outgoing.resumeCursor,
         ...(!compactThisTurn && recoveryText !== undefined ? { recoveryText } : {}),
         transcript: outgoing.transcript,
-        system: midTaskContinuity ? appendMidTaskContinuitySystem(prompt.text) : prompt.text,
+        system: midTaskContinuity
+          ? (bootstrapHybridEnabled(cfg)
+              ? appendBootstrapHybridContinuitySystem(prompt.text, {
+                  hasAddresses: bootstrapHybridAddresses,
+                })
+              : appendMidTaskContinuitySystem(prompt.text))
+          : prompt.text,
         integrations,
         cwd,
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {

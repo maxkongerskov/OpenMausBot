@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   attachRetrievedChunks,
+  attachVFallback,
   buildNotebookCatalogHints,
   keywordRetrieve,
   listNotebookArchives,
   readLatestNotebookArchive,
+  scoreBootstrapConfidence,
   splitRetrievalChunks,
   tokenizeQuery,
 } from "./bootstrap-rag.ts";
@@ -177,5 +179,45 @@ describe("attachRetrievedChunks + bootstrap pack", () => {
     expect(chunks.length).toBe(2);
     expect(chunks[0]!.text).toContain("alpha");
     expect(chunks[1]!.text).toContain("beta");
+  });
+});
+
+describe("scoreBootstrapConfidence + attachVFallback (M5)", () => {
+  it("stays on bootstrap when P0 + hits are strong", () => {
+    const pack = "Goal\nship\nOpen\ngo\nAddresses\nsrc/a.ts\nRetrieved\n- hit";
+    const conf = scoreBootstrapConfidence({
+      pack,
+      pins: { goal: "ship", open: "go", addresses: "src/a.ts" },
+      hits: [{ id: "notebook#0", score: 6, text: "CANARY strong" }],
+      notebookChars: 2000,
+    });
+    expect(conf.path).toBe("bootstrap");
+    expect(conf.score).toBeGreaterThanOrEqual(0.55);
+    const out = attachVFallback(pack, conf, "Goal\nship\nOpen\ngo");
+    expect(out.summary).not.toMatch(/Fallback/);
+  });
+
+  it("attaches mini-V when Open missing and retrieve weak", () => {
+    const notebook = [
+      "Goal",
+      "Ship Keep chatting",
+      "Addresses",
+      "server/store.ts",
+      "Verified facts",
+      "CANARY_FALLBACK_MINI",
+      "This turn",
+      "lost the open pin",
+    ].join("\n");
+    const pack = "Goal\nShip Keep chatting\nAddresses\nserver/store.ts";
+    const conf = scoreBootstrapConfidence({
+      pack,
+      pins: { goal: "Ship Keep chatting", open: "", addresses: "server/store.ts" },
+      hits: [],
+      notebookChars: 2500,
+    });
+    expect(conf.path === "mini-v" || conf.path === "full-v").toBe(true);
+    const out = attachVFallback(pack, conf, notebook, "continue");
+    expect(out.summary).toMatch(/Fallback/);
+    expect(out.summary).toContain("CANARY_FALLBACK_MINI");
   });
 });

@@ -5,7 +5,7 @@
 // current user turn (and any tool follow-ups after it).
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
-  appendMidTaskContinuitySystem,
+  appendBootstrapHybridContinuitySystem,
   clipCompactUserText,
   compactedProviderUserTurns,
   COMPACT_USER_CLIP_CHARS,
@@ -72,15 +72,21 @@ export function messageMatchesCompactNeedle(content: string, needle: string): bo
   return text.length >= n.length * 0.5;
 }
 
-function withMidTaskContinuity(prefix: ChatMessage[]): ChatMessage[] {
+function withMidTaskContinuity(prefix: ChatMessage[], opts?: { hasAddresses?: boolean }): ChatMessage[] {
   if (prefix.length === 0) {
-    return [{ role: "system", content: MID_TASK_CONTINUITY_SYSTEM }];
+    return [{
+      role: "system",
+      content: appendBootstrapHybridContinuitySystem("", { hasAddresses: opts?.hasAddresses }),
+    }];
   }
   const last = prefix[prefix.length - 1]!;
   const content = messageText(last);
   return [
     ...prefix.slice(0, -1),
-    { ...last, content: appendMidTaskContinuitySystem(content) },
+    {
+      ...last,
+      content: appendBootstrapHybridContinuitySystem(content, { hasAddresses: opts?.hasAddresses }),
+    },
   ];
 }
 
@@ -92,6 +98,7 @@ export function rewriteOpenAIMessages(messages: ChatMessage[], vector: string, u
       const role = typeof message.role === "string" ? message.role : "";
       return role === "system" || role === "developer";
     }),
+    { hasAddresses: /\bAddresses\b/i.test(vector) },
   );
   const { vector: stateVector, liveAsk } = compactedProviderUserTurns(vector, userText);
   // Bare vector — no "Current task state" framing (models echo/narrate it).

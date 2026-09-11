@@ -37,6 +37,8 @@ import {
   stubBulkPadText,
   stripSecretLines,
   summarizeViaLocalHost,
+  ADDRESS_REREAD_CUE,
+  appendBootstrapHybridContinuitySystem,
   buildBootstrapPack,
   bootstrapPackBudgetChars,
   latestBootstrapSections,
@@ -1143,3 +1145,21 @@ describe("buildBootstrapPack (bootstrap hybrid M1)", () => {
   });
 });
 
+describe("bootstrap hybrid M4 Address re-read", () => {
+  it("adds Re-read section when Addresses exist", () => {
+    const pack = buildBootstrapPack({
+      notebook: "Goal\nFix store\nAddresses\nserver/store.ts\nOpen\nedit store",
+      budgetChars: 4000,
+      userText: "continue",
+    });
+    expect(pack).toContain("Re-read");
+    expect(pack).toContain("server/store.ts");
+    expect(pack.toLowerCase()).toContain("re-read these from disk");
+  });
+
+  it("appends Address re-read cue to continuity system", () => {
+    const out = appendBootstrapHybridContinuitySystem("You are helpful.", { hasAddresses: true });
+    expect(out).toContain(ADDRESS_REREAD_CUE);
+    expect(out).toMatch(/Mid-task/);
+  });
+});

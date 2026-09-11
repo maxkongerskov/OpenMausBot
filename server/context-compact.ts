@@ -96,6 +96,10 @@ export function demotePadBlobsInVector(summary: string): string {
 export const MID_TASK_CONTINUITY_SYSTEM =
   "Mid-task: working memory is above. Answer the latest user message. Do not greet, re-acknowledge persona, or ask for a first instruction.";
 
+/** M4: coding continuity — Addresses are pointers; re-read before edits. */
+export const ADDRESS_REREAD_CUE =
+  "Before editing code, re-read the listed Addresses (paths/VAs) from disk — do not invent file contents from memory.";
+
 /** Open/Next bodies that are stalls / soft-park / meta — replace with a forward line from the live ask. */
 const NEXT_ACTION_BAN =
   /\b(?:done\.?|wait for next|provide(?:\s+a)?\s+prompt|await(?:ing)?(?:\s+the)?\s+user|await(?:ing)?(?:\s+the)?\s+next\b|confirm(?:ing)?(?:\s+\w+){0,8}\s+last turn|provide(?:\s+the)?\s+(?:first|next)\s+(?:instruction|task)|ask(?:\s+the\s+user)?\s+for(?:\s+(?:the|a))?\s+(?:first|next)\s+(?:instruction|task)|wait(?:ing)?(?:\s+for)?(?:\s+the)?\s+(?:next|user)\b|successor should await)\b/i;
@@ -184,10 +188,22 @@ export function sanitizeForwardOnlyVector(summary: string, userText: string): st
 }
 
 export function appendMidTaskContinuitySystem(systemText: string): string {
-  const base = systemText.trimEnd();
+  const base = systemText.trim();
   if (!base) return MID_TASK_CONTINUITY_SYSTEM;
-  if (base.includes("Mid-task:") && base.includes("working memory is above")) return base;
+  if (base.includes(MID_TASK_CONTINUITY_SYSTEM)) return base;
   return `${base} ${MID_TASK_CONTINUITY_SYSTEM}`;
+}
+
+/** Mid-task + optional Address re-read cue (bootstrap hybrid compact). */
+export function appendBootstrapHybridContinuitySystem(
+  systemText: string,
+  opts?: { hasAddresses?: boolean },
+): string {
+  let out = appendMidTaskContinuitySystem(systemText);
+  if (opts?.hasAddresses && !out.includes("re-read the listed Addresses")) {
+    out = `${out} ${ADDRESS_REREAD_CUE}`;
+  }
+  return out;
 }
 
 /** @deprecated Prefer compactedProviderUserTurns — kept for tests that assert mash absence of restart framing. */
@@ -312,10 +328,15 @@ export function buildBootstrapPack(input: {
   const open =
     sections.open?.trim() ||
     (input.userText?.trim() ? forwardNextFromLiveAsk(input.userText) : "");
+  const addressBody = (sections.addresses ?? "").trim();
+  const reReadBody = addressBody
+    ? `${addressBody}\nDo not invent the next patch — re-read these from disk before editing.`
+    : "";
   const p0Parts = [
     formatBootstrapSection("Goal", goal),
     formatBootstrapSection("Open", open),
-    formatBootstrapSection("Addresses", sections.addresses ?? ""),
+    formatBootstrapSection("Addresses", addressBody),
+    formatBootstrapSection("Re-read", reReadBody),
     formatBootstrapSection("Landmines", sections.landmines ?? ""),
   ].filter(Boolean);
   const p0 = p0Parts.join("\n\n");

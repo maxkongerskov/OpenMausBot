@@ -25,6 +25,7 @@ export function CompactAroundSettings() {
   const savedPrompt = state.config?.compaction?.prompt ?? null;
   const keepVectors = state.config?.compaction?.keepVectors === true;
   const microVectors = state.config?.compaction?.microVectorsEnabled === true;
+  const bootstrapHybrid = state.config?.compaction?.bootstrapHybrid === true;
   const archiveDir = state.config?.compaction?.vectorArchiveDir ?? null;
   const envOverride = state.config?.compaction?.envOverride ?? null;
   const [saving, setSaving] = useState<string | null>(null);
@@ -250,6 +251,25 @@ export function CompactAroundSettings() {
             disabled={detailsDisabled}
             aria-label="Build a running notebook"
             onClick={() => void patch({ microVectorsEnabled: !microVectors })}
+          />
+        </div>
+      </div>
+
+      <div className={cn("flex flex-col gap-2", aroundOff && "opacity-50")}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-medium text-ink">Bootstrap hybrid</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+              On refresh, inject a thin Goal/Open/Addresses seed plus notebook catalog and keyword retrieval instead of
+              a fat state vector. Falls back to a mini or full vector when confidence is low. Off by default (current
+              Keep chatting path). Best with a running notebook.
+            </p>
+          </div>
+          <Switch
+            checked={bootstrapHybrid}
+            disabled={detailsDisabled}
+            aria-label="Bootstrap hybrid"
+            onClick={() => void patch({ bootstrapHybrid: !bootstrapHybrid })}
           />
         </div>
       </div>

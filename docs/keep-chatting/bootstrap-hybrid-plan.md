@@ -2,7 +2,7 @@
 
 **Goal (UX):** Chat feels unlimited. UI history never dies. Backend provider session resets at a **customizable Compact around** ceiling. Continuity survives recycles — especially coding.
 
-**Status:** Plan only (2026-09-11). Fat **state vector (V)** remains shipped path on `keep-chatting` / PR #1080. Bootstrap is the **end shape**; hybrid is how we get there without regressing dogfood.
+**Status:** M0–M5 + M7 implemented on Development `keep-chatting` (local; flag default off). M6 A/B dogfood still open. (2026-09-11). Fat **state vector (V)** remains shipped path on `keep-chatting` / PR #1080. Bootstrap is the **end shape**; hybrid is how we get there without regressing dogfood.
 
 **Usage handoff rule:** Max Super Grok Plus — if an agent run starts around ~83% usage, **stop by ~95%**, write handoff, pass to OpenMausBot **GrokBot**. Never run to empty.
 
@@ -139,10 +139,9 @@ Do **not** outsource compaction to the agent harness (Claude/Codex `/compact` al
 - Local dogfood apps through **0.1.93** (UI accordion collapsed default, etc.)  
 - Design consensus (2026-09-11): bootstrap hybrid is better **end** shape; V is proven **now**
 
-### Not started
-- All M0–M7 implementation above  
-- No `bootstrapHybrid` flag yet  
-- No packer / host RAG / V-fallback code  
+### Implementation (Development, local commits)
+- M0–M5 + M7 code landed behind `bootstrapHybrid` (default off)  
+- M6 A/B dogfood (Gemma 4 + Noodle) still open before default-on  
 
 ### Worktree
 - Orca: `/Users/maxkongerskov/orca/workspaces/OpenMausBot/Development`  

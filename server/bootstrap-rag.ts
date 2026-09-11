@@ -282,3 +282,116 @@ export function attachRetrievedChunks(
   const section = lines.join("\n");
   return base ? `${base}\n\n${section}` : section;
 }
+
+export type BootstrapConfidencePath = "bootstrap" | "mini-v" | "full-v";
+
+export type BootstrapConfidence = {
+  score: number;
+  path: BootstrapConfidencePath;
+  reasons: string[];
+};
+
+/** M5: score thin-pack confidence from P0 completeness + retrieve hits. */
+export function scoreBootstrapConfidence(input: {
+  pack: string;
+  pins: Partial<Record<string, string>>;
+  hits: RetrievedChunk[];
+  notebookChars?: number;
+}): BootstrapConfidence {
+  const reasons: string[] = [];
+  let score = 1;
+  const goal = (input.pins.goal ?? "").trim();
+  const open = (input.pins.open ?? "").trim();
+  const addresses = (input.pins.addresses ?? "").trim();
+  const pack = input.pack ?? "";
+
+  if (!goal || goal.length < 3) {
+    score -= 0.35;
+    reasons.push("missing-goal");
+  }
+  if (!open || open.length < 3) {
+    score -= 0.25;
+    reasons.push("missing-open");
+  }
+  if (!addresses) {
+    score -= 0.15;
+    reasons.push("missing-addresses");
+  }
+  if ((input.notebookChars ?? 0) > 800 && input.hits.length === 0) {
+    score -= 0.2;
+    reasons.push("no-retrieve-hits");
+  } else if (input.hits.length > 0 && input.hits[0]!.score < 3) {
+    score -= 0.08;
+    reasons.push("weak-retrieve");
+  }
+  if (!/\bRetrieved\b/i.test(pack) && (input.notebookChars ?? 0) > 1200) {
+    score -= 0.05;
+    reasons.push("no-retrieved-section");
+  }
+
+  score = Math.max(0, Math.min(1, Number(score.toFixed(3))));
+  let path: BootstrapConfidencePath = "bootstrap";
+  if (score < 0.35) path = "full-v";
+  else if (score < 0.55) path = "mini-v";
+  return { score, path, reasons };
+}
+
+/** Mini / full V body from notebook pins + clipped stack (no extra LLM). */
+export function buildVFallbackBody(input: {
+  notebook: string;
+  mode: "mini-v" | "full-v";
+  userText?: string;
+}): string {
+  const sections = latestBootstrapSections(input.notebook ?? "");
+  const mode = input.mode;
+  const budget = mode === "full-v" ? 12_000 : 4_000;
+  const parts: string[] = [];
+  const push = (title: string, body?: string) => {
+    const b = (body ?? "").trim();
+    if (!b) return;
+    parts.push(`${title}\n${b}`);
+  };
+  push("Goal", sections.goal);
+  push("Open", sections.open || (input.userText ? input.userText.trim().slice(0, 220) : ""));
+  push("Addresses", sections.addresses);
+  push("Landmines", sections.landmines);
+  push("Verified facts", sections.facts);
+  push("Constraints", sections.constraints);
+  push("This turn", sections.thisTurn);
+  let body = parts.join("\n\n").trim();
+  if (!body) {
+    const raw = (input.notebook ?? "").trim();
+    body = raw.slice(0, Math.min(budget, raw.length));
+  }
+  if (body.length > budget) body = `${body.slice(0, budget - 1).trimEnd()}…`;
+  const label = mode === "full-v" ? "Fallback V" : "Fallback mini-V";
+  return `${label}\n${body}`;
+}
+
+/** Attach V-fallback under pack when confidence path is mini-v or full-v. */
+export function attachVFallback(
+  pack: string,
+  confidence: BootstrapConfidence,
+  notebook: string,
+  userText = "",
+): { summary: string; path: BootstrapConfidencePath; logged: string } {
+  const base = (pack ?? "").trim();
+  if (confidence.path === "bootstrap") {
+    return {
+      summary: base,
+      path: "bootstrap",
+      logged: `bootstrap score=${confidence.score} reasons=${confidence.reasons.join(",") || "ok"}`,
+    };
+  }
+  const fallback = buildVFallbackBody({
+    notebook,
+    mode: confidence.path,
+    userText,
+  });
+  const summary = base ? `${base}\n\n${fallback}` : fallback;
+  return {
+    summary,
+    path: confidence.path,
+    logged: `${confidence.path} score=${confidence.score} reasons=${confidence.reasons.join(",") || "ok"}`,
+  };
+}
