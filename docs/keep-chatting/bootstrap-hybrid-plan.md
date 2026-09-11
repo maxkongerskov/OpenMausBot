@@ -105,7 +105,8 @@ Do **not** outsource compaction to the agent harness (Claude/Codex `/compact` al
 - [ ] Metrics/log which path fired
 
 ### M6 — A/B dogfood to 95% (several days wall-clock)
-- [ ] Long Run (Gemma): fill → compact #2, #3; canary F6B3 / vault
+- [ ] **Gemma 4** (local Gemma 4): fill → compact #2, #3; canaries / continuity (primary local inject)
+- [ ] Long Run (prior Gemma path): fill → compact #2, #3; canary F6B3 / vault as needed
 - [ ] Noodle (Claude+Unsloth): coding continuity + SPT/hard cap still honest
 - [ ] Compare prompt size, soft-park, amnesia vs V flag off
 - [ ] Only then consider default-on / PR narrative shift
@@ -180,7 +181,8 @@ DO NOT:
 - Remove V path until M6 gates pass
 - Outsource continuity to harness /compact alone
 
-Dogfood targets: Long Run (Gemma) + Noodle (Claude/Unsloth)
+Dogfood targets: **Gemma 4** (primary local) + Noodle (Claude/Unsloth); Long Run as needed
+Developer bot / handoff: **Grok Bot HO**
 Canary reference: CANARY_LONGRUN_F6B3 / book-fill thread comps proof pattern
 ```
 
@@ -190,4 +192,14 @@ Canary reference: CANARY_LONGRUN_F6B3 / book-fill thread comps proof pattern
 1. M0 flag on Development `keep-chatting`  
 2. M1 packer + thin inject behind flag  
 3. Package/dogfood one recycle  
-4. Watch usage; at ~95% fill §7 handoff → GrokBot  
+4. Watch usage; at ~95% fill §7 handoff → GrokBot
+
+## 9. Bots for dogfood / handoff
+
+| Role | Bot | Notes |
+|---|---|---|
+| **Developer / handoff** | **Grok Bot HO** (`15af8ebc-c32f-4c9d-a720-4bbfabc9568c`, thread `fe7247ad-289b-48bf-af97-8475156e7e55`) | Receives plan + done + next near usage limit; continues implementation |
+| **Primary local test** | **Gemma 4** | Local Gemma 4 LLM loaded — use for bootstrap hybrid dogfood (fill → compact #2/#3, canaries, continuity) |
+| Also keep | Long Run (Gemma inject history) + Noodle (Claude/Unsloth) | Prior proof paths; still use for harness coverage |
+
+Update M6: prefer **Gemma 4** for local inject A/B; keep Noodle for Claude/Unsloth.
