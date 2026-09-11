@@ -5222,6 +5222,8 @@ describe("harness HTTP API", () => {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);
     }
+  });
+
   it("validates and persists Compact around without reloading providers", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);
