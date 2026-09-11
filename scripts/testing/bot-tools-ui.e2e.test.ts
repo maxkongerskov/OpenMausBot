@@ -48,12 +48,14 @@ describe("bot setup and tools in the real renderer", () => {
     const bots = async (): Promise<SavedBot[]> => (await fetch(`${info.url}/api/bots`).then((response) => response.json())).bots;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const openTools = async () => {
-      // The sidebar also has Tools; the composer's button comes after it.
+      // Composer tray Tools is gone; open bot settings (mascot) then Access.
+      // Accordion starts collapsed, so Access must be expanded explicitly.
       const state = await ui("snapshot", "--interactive");
-      const target = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-        .filter(([, entry]) => entry.role === "button" && entry.name === "Tools").at(-1);
-      expect(target).toBeDefined();
-      await ui("click", "--ref", `@${target![0]}`);
+      const profile = Object.entries(state.refs as Record<string, { role: string; name: string }>)
+        .find(([, entry]) => entry.role === "button" && /Open .+ profile/.test(entry.name));
+      expect(profile).toBeDefined();
+      await ui("click", "--ref", `@${profile![0]}`);
+      await click("Access");
     };
     const clickRole = async (title: string) => {
       const state = await ui("snapshot", "--interactive");
