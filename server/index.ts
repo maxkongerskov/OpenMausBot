@@ -229,7 +229,6 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { decodeInjectId } from "./drivers/local-inject.ts";
-import { AUTO_COMPACT_AROUND_TOKENS } from "../shared/compact-around.ts";
 import { advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
 import {
   appendMidTaskContinuitySystem,
