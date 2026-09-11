@@ -237,6 +237,7 @@ import {
   appendTurnPage,
   archiveAndSeedNotebook,
   awaitPendingNotebookUpdate,
+  buildExtractiveTurnPage,
   buildMicroNotebookPrompt,
   markMicroCompacted,
   NOTEBOOK_STACK_READ_CHARS,
@@ -3440,19 +3441,24 @@ bus.subscribe((event: RuntimeEvent) => {
                   timer.unref?.();
                 }),
               ]);
-              if (!raw) {
+              let page = raw?.trim() || "";
+              if (!page) {
                 if (!warnedMicroSideLlmFail) {
                   warnedMicroSideLlmFail = true;
                   console.warn(
-                    "micro vectors: inject + generateText both failed — skipping notebook write (no heuristic fallback)",
+                    "micro vectors: inject + generateText both failed — using quote-only extractive turn page",
                   );
                 }
-                return;
+                page = buildExtractiveTurnPage({
+                  userText: userTextForMicro,
+                  assistantReply: replyForMicro,
+                });
               }
+              if (!page) return;
               appendTurnPage({
                 botId,
                 threadId,
-                text: raw,
+                text: page,
                 userText: userTextForMicro,
                 taskTitle: taskRec?.title,
               });
@@ -4701,13 +4707,12 @@ async function startTurn(
             lastAssistantText,
             catalogHints,
           });
-          const pins = latestBootstrapSections(notebookText);
-          bootstrapHybridAddresses = Boolean((pins.addresses ?? "").trim());
+          const notebookPins = latestBootstrapSections(notebookText);
           const retrieveQuery = [
             userPrompt,
-            pins.open ?? "",
-            pins.addresses ?? "",
-            pins.goal ?? "",
+            notebookPins.open ?? "",
+            notebookPins.addresses ?? "",
+            notebookPins.goal ?? "",
             lastAssistantText,
           ]
             .filter((s) => s.trim())
@@ -4722,6 +4727,13 @@ async function startTurn(
             topK: 3,
           });
           summary = attachRetrievedChunks(summary, hits);
+          const packPins = latestBootstrapSections(summary);
+          const pins = {
+            goal: notebookPins.goal || packPins.goal,
+            open: notebookPins.open || packPins.open,
+            addresses: notebookPins.addresses || packPins.addresses,
+          };
+          bootstrapHybridAddresses = Boolean((pins.addresses ?? "").trim());
           const confidence = scoreBootstrapConfidence({
             pack: summary,
             pins,

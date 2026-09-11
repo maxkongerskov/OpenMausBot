@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   appendMicroVector,
   appendTurnPage,
+  buildExtractiveTurnPage,
   archiveAndSeedNotebook,
   awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   deleteTaskMicroVectors,
+  buildExtractiveTurnPage,
   gateHarvestPage,
   markMicroCompacted,
   microLedgerPath,
@@ -477,5 +479,19 @@ describe("gateHarvestPage", () => {
     expect(path).toBeTruthy();
     const raw = readFileSync(notebookPath("b1", "t-gate", base), "utf8");
     expect(raw).toMatch(/0xCafeBabe/i);
+  });
+});
+
+describe("buildExtractiveTurnPage", () => {
+  it("quotes user/assistant into Goal / This turn / Open", () => {
+    const page = buildExtractiveTurnPage({
+      userText: "edit server/bootstrap-rag.ts and keep CANARY_X",
+      assistantReply: "Patched the retrieve scorer.",
+    });
+    expect(page).toContain("Goal");
+    expect(page).toContain("CANARY_X");
+    expect(page).toContain("This turn");
+    expect(page).toContain("Patched the retrieve scorer.");
+    expect(page).toContain("Open");
   });
 });

@@ -178,6 +178,37 @@ function writeTaskMeta(
 }
 
 /**
+ * Quote-only turn page when the side LLM returns nothing.
+ * Does not invent facts — only scaffolds headings around the live user/assistant text
+ * so harvest gates / bootstrap still have a page to pin. Prefer LLM pages when available.
+ */
+export function buildExtractiveTurnPage(input: {
+  userText?: string;
+  assistantReply: string;
+}): string {
+  const user = (input.userText ?? "").trim().replace(/\s+/g, " ");
+  const reply = (input.assistantReply ?? "").trim();
+  const goal = user
+    ? user.length > 400
+      ? `${user.slice(0, 400).trimEnd()}…`
+      : user
+    : "";
+  const thisTurn = reply
+    ? reply.length > 1200
+      ? `${reply.slice(0, 1200).trimEnd()}…`
+      : reply
+    : "";
+  const parts: string[] = [];
+  if (goal) parts.push(`Goal\n${goal}`);
+  if (thisTurn) parts.push(`This turn\n${thisTurn}`);
+  if (user) {
+    const open = user.length > 220 ? `${user.slice(0, 220).trimEnd()}…` : user;
+    parts.push(`Open\n${open}`);
+  }
+  return parts.join("\n\n").trim();
+}
+
+/**
  * Side-LLM prompt: harvest a rich turn page from this turn (append-only).
  * Headings: Goal, This turn (required), Verified facts, Addresses / Landmines /
  * Constraints / Open only when real. Open replaces Next — omit if nothing open.
