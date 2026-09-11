@@ -148,16 +148,35 @@ export function shouldCompact(input: {
   ceilingTokens: number;
   turnCount: number;
   memory?: MemoryProbe | null;
-  /** User turns already in the post-refresh tail. 0/1 = we just recycled. */
+  /**
+   * User turns in the post-refresh tail *after* the compacting turn
+   * (`firstKeptId`). 0 = we just recycled and have not taken another user
+   * turn yet. Soft (80%) recycle waits for ≥1; the hard ceiling never waits.
+   */
   turnsSinceCompact?: number;
 }): boolean {
-  if (input.turnCount < 2 || input.ceilingTokens <= 0) return false;
-  if (typeof input.turnsSinceCompact === "number" && input.turnsSinceCompact < 2) return false;
+  if (input.ceilingTokens <= 0) return false;
+  // Hard Compact around cap: at or over the budget, always recycle — even on
+  // the first turn after a prior compact, and even on a one-turn thread.
+  if (input.fillTokens >= input.ceilingTokens && input.turnCount >= 1) return true;
+  if (input.turnCount < 2) return false;
+  // Soft recycle: avoid an immediate second compact on the next keystroke.
+  if (typeof input.turnsSinceCompact === "number" && input.turnsSinceCompact < 1) return false;
   if (input.fillTokens >= input.ceilingTokens * COMPACTION_RATIO) return true;
   if (input.memory && memoryPressure(input.memory) && input.fillTokens >= input.ceilingTokens * 0.5) {
     return true;
   }
   return false;
+}
+
+/** User turns in `transcript` after the compaction anchor (excludes firstKeptId). */
+export function usersAfterCompaction(
+  transcript: Array<{ role: string; id?: string }>,
+  lastCompaction: { firstKeptId: string } | null | undefined,
+): number | undefined {
+  if (!lastCompaction) return undefined;
+  const anchor = lastCompaction.firstKeptId;
+  return transcript.filter((turn) => turn.role === "user" && turn.id !== anchor).length;
 }
 
 export { VECTOR_BUDGET_AUTO_CAP, VECTOR_BUDGET_MAX } from "../shared/compact-around.ts";
