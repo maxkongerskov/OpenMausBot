@@ -11,7 +11,6 @@ import {
   awaitPendingNotebookUpdate,
   buildMicroNotebookPrompt,
   deleteTaskMicroVectors,
-  buildExtractiveTurnPage,
   gateHarvestPage,
   markMicroCompacted,
   microLedgerPath,
