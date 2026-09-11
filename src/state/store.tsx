@@ -384,6 +384,7 @@ export interface ConfigStatus {
     prompt: string | null;
     keepVectors: boolean;
     microVectorsEnabled: boolean;
+    bootstrapHybrid: boolean;
     vectorArchiveDir: string | null;
     envOverride: number | null;
   };
@@ -446,6 +447,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
       prompt: frame.compaction?.prompt ?? null,
       keepVectors: frame.compaction?.keepVectors === true,
       microVectorsEnabled: frame.compaction?.microVectorsEnabled === true,
+      bootstrapHybrid: frame.compaction?.bootstrapHybrid === true,
       vectorArchiveDir: frame.compaction?.vectorArchiveDir ?? null,
       envOverride: frame.compaction?.envOverride ?? null,
     },

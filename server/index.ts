@@ -112,6 +112,7 @@ import {
   vectorPrompt,
   keepVectorsEnabled,
   microVectorsEnabled,
+  bootstrapHybridEnabled,
   vectorArchiveDir,
   roomTurnTimeoutMinutes,
   saveConfig,
@@ -219,11 +220,15 @@ import {
   appendMidTaskContinuitySystem,
   clipCompactUserText,
   collectCompactSeedDirs,
+  bootstrapPackBudgetChars,
+  buildBootstrapPack,
   compactSession,
   decideSettledPromptTokens,
   existingDirectory,
   fillTokensFor,
   generateSideText,
+  harvestAddresses,
+  injectStateVector,
   resolveOutgoingTurn,
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
@@ -4670,27 +4675,44 @@ async function startTurn(
             : "";
         const lastAssistantText =
           [...transcript].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
-        const result = await compactSession({
-          transcript: facing.lastCompaction
-            ? [{ role: "assistant", text: facing.lastCompaction.summary }, ...transcript]
-            : transcript,
-          previousSummary: facing.lastCompaction?.summary,
-          userText: userPrompt,
-          extractionPrompt: store.bot(bot.id)?.compactionPrompt?.trim() || vectorPrompt(cfg) || undefined,
-          maxTokens: vectorBudget(ceiling.tokens, vectorBudgetTokens(cfg)),
-          modelId: model,
-          generateText: instance.generateText ? (prompt) => instance.generateText!(prompt) : undefined,
-          workspaceDir: workspaceDir(bot.id),
-          workspaceDirs: collectCompactSeedDirs({
-            privateWorkspace: workspaceDir(bot.id),
-            taskCwd: task.cwd,
-            botCwd: bot.cwd,
-            instructions: bot.description,
-          }),
-          workingCwd: existingDirectory(task.cwd) ?? existingDirectory(bot.cwd),
-          ...(microLedger ? { microLedger } : {}),
-          ...(lastAssistantText ? { lastAssistantText } : {}),
-        });
+        let result: { summary: string; turnText: string };
+        if (bootstrapHybridEnabled(cfg)) {
+          // M1: thin P0-priority bootstrap instead of fat folded V. V path kept when flag off.
+          const notebookText = microLedger || facing.lastCompaction?.summary || "";
+          const harvested = harvestAddresses(notebookText, userPrompt, lastAssistantText);
+          const catalogHints: string[] = [];
+          if (harvested.length) catalogHints.push(`${harvested.length} address marker(s) in notebook`);
+          const summary = buildBootstrapPack({
+            notebook: notebookText,
+            budgetChars: bootstrapPackBudgetChars(ceiling.tokens),
+            userText: userPrompt,
+            lastAssistantText,
+            catalogHints,
+          });
+          result = { summary, turnText: injectStateVector(summary, userPrompt) };
+        } else {
+          result = await compactSession({
+            transcript: facing.lastCompaction
+              ? [{ role: "assistant", text: facing.lastCompaction.summary }, ...transcript]
+              : transcript,
+            previousSummary: facing.lastCompaction?.summary,
+            userText: userPrompt,
+            extractionPrompt: store.bot(bot.id)?.compactionPrompt?.trim() || vectorPrompt(cfg) || undefined,
+            maxTokens: vectorBudget(ceiling.tokens, vectorBudgetTokens(cfg)),
+            modelId: model,
+            generateText: instance.generateText ? (prompt) => instance.generateText!(prompt) : undefined,
+            workspaceDir: workspaceDir(bot.id),
+            workspaceDirs: collectCompactSeedDirs({
+              privateWorkspace: workspaceDir(bot.id),
+              taskCwd: task.cwd,
+              botCwd: bot.cwd,
+              instructions: bot.description,
+            }),
+            workingCwd: existingDirectory(task.cwd) ?? existingDirectory(bot.cwd),
+            ...(microLedger ? { microLedger } : {}),
+            ...(lastAssistantText ? { lastAssistantText } : {}),
+          });
+        }
         if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
           throw new DirectTurnSetupCancelled("turn stopped during compaction");
         }
@@ -7733,6 +7755,7 @@ function configStatus() {
       prompt: vectorPrompt(cfg),
       keepVectors: keepVectorsEnabled(cfg),
       microVectorsEnabled: microVectorsEnabled(cfg),
+      bootstrapHybrid: bootstrapHybridEnabled(cfg),
       vectorArchiveDir: vectorArchiveDir(cfg),
       envOverride: envCeilingOverride() ?? null,
     },

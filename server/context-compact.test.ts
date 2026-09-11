@@ -37,6 +37,9 @@ import {
   stubBulkPadText,
   stripSecretLines,
   summarizeViaLocalHost,
+  buildBootstrapPack,
+  bootstrapPackBudgetChars,
+  latestBootstrapSections,
 } from "./context-compact.ts";
 import { decodeInjectId } from "./drivers/local-inject.ts";
 import type { FacingTurn } from "./context-rebuild.ts";
@@ -1049,3 +1052,94 @@ describe("generateSideText", () => {
     expect(fetchBody).toMatchObject({ enable_thinking: false });
   });
 });
+
+describe("buildBootstrapPack (bootstrap hybrid M1)", () => {
+  const fatNotebook = [
+    "Goal",
+    "Ship Keep chatting bootstrap hybrid without amnesia",
+    "This turn",
+    "Wrote a long essay about the architecture and restated half the transcript for color.",
+    "Verified facts",
+    "CANARY_BOOTSTRAP_P1",
+    "notebook.md is primary truth",
+    "Addresses",
+    "0x100474798",
+    "/Users/max/proj/server/context-compact.ts",
+    "Landmines",
+    "Never drop Addresses on compact",
+    "Open",
+    "Implement P0 packer and wire flag",
+    "",
+    "---",
+    "",
+    "Goal",
+    "Ship Keep chatting bootstrap hybrid without amnesia",
+    "This turn",
+    "Packed more crumbs and another essay that should be truncated under a tight budget.",
+    "Verified facts",
+    "CANARY_BOOTSTRAP_P1",
+    "latest page wins for pins",
+    "Addresses",
+    "0x100474798",
+    "/Users/max/proj/server/context-compact.ts",
+    "Landmines",
+    "Never drop Addresses on compact",
+    "Open",
+    "Implement P0 packer and wire flag",
+  ].join("\n");
+
+  it("never truncates P0 (Goal/Open/Addresses/Landmines) under a tight budget", () => {
+    const pack = buildBootstrapPack({
+      notebook: fatNotebook,
+      budgetChars: 120,
+      userText: "continue bootstrap hybrid",
+    });
+    expect(pack).toContain("Goal");
+    expect(pack).toContain("Ship Keep chatting bootstrap hybrid without amnesia");
+    expect(pack).toContain("Open");
+    expect(pack).toContain("Implement P0 packer and wire flag");
+    expect(pack).toContain("Addresses");
+    expect(pack).toContain("0x100474798");
+    expect(pack).toContain("/Users/max/proj/server/context-compact.ts");
+    expect(pack).toContain("Landmines");
+    expect(pack).toContain("Never drop Addresses on compact");
+    // Tight budget: P2 crumbs should be dropped or heavily truncated first.
+    expect(pack.length).toBeGreaterThan(120); // P0 may exceed budget — still intact
+  });
+
+  it("uses thin bootstrap when packing (P2 truncated before P0)", () => {
+    const pack = buildBootstrapPack({
+      notebook: fatNotebook,
+      budgetChars: bootstrapPackBudgetChars(128_000),
+      userText: "continue",
+      catalogHints: ["notebooks/session-001.md"],
+    });
+    expect(pack).toContain("Goal");
+    expect(pack).toContain("Addresses");
+    expect(pack).toContain("Catalog");
+    expect(pack).toContain("notebooks/session-001.md");
+    expect(pack.length).toBeLessThanOrEqual(bootstrapPackBudgetChars(128_000));
+    const sections = latestBootstrapSections(fatNotebook);
+    expect(sections.goal).toMatch(/Ship Keep chatting/);
+    expect(sections.addresses).toContain("0x100474798");
+  });
+
+  it("flag-off V path still folds via compactSession (fat summary intact)", async () => {
+    // Mirror production: bootstrapHybridEnabled default false → compactSession V path.
+    const result = await compactSession({
+      transcript: [
+        { role: "user", text: "Fix login" },
+        { role: "assistant", text: "editing src/auth.ts" },
+      ],
+      userText: "what is left?",
+      maxTokens: 800,
+      summarize: async () =>
+        "Goal\nfix login\nVerified facts\n/auth/callback\nAddresses\nsrc/auth.ts\nOpen\nedit src/auth.ts",
+    });
+    expect(result.summary).toContain("Goal");
+    expect(result.summary).toContain("fix login");
+    expect(result.turnText).toContain("what is left?");
+    expect(result.turnText.startsWith("Goal")).toBe(true);
+  });
+});
+

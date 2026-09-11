@@ -21,6 +21,7 @@ import { customMcpServers,
   vectorPrompt,
   keepVectorsEnabled,
   microVectorsEnabled,
+  bootstrapHybridEnabled,
   vectorArchiveDir,
   roomTurnTimeoutMinutes,
   showToolCallsEnabled,
@@ -377,6 +378,12 @@ describe("configuration boundaries", () => {
     expect(microVectorsEnabled({})).toBe(false);
     expect(microVectorsEnabled({ compaction: {} })).toBe(false);
     expect(microVectorsEnabled({ compaction: { microVectorsEnabled: true } })).toBe(true);
+    expect(parseConfigPatch({ compaction: { bootstrapHybrid: true } })).toEqual({
+      compaction: { bootstrapHybrid: true },
+    });
+    expect(bootstrapHybridEnabled({})).toBe(false);
+    expect(bootstrapHybridEnabled({ compaction: {} })).toBe(false);
+    expect(bootstrapHybridEnabled({ compaction: { bootstrapHybrid: true } })).toBe(true);
     expect(vectorArchiveDir({})).toBeNull();
     expect(() => parseConfigPatch({ compaction: { vectorArchiveDir: "/Applications" } })).toThrow(
       "compaction.vectorArchiveDir",

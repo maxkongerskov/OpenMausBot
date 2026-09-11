@@ -5234,6 +5234,7 @@ describe("harness HTTP API", () => {
       prompt: null,
       keepVectors: false,
       microVectorsEnabled: false,
+      bootstrapHybrid: false,
       vectorArchiveDir: null,
       envOverride: null,
     });
@@ -5251,6 +5252,7 @@ describe("harness HTTP API", () => {
       prompt: null,
       keepVectors: false,
       microVectorsEnabled: false,
+      bootstrapHybrid: false,
       vectorArchiveDir: null,
       envOverride: null,
     });
@@ -5263,6 +5265,7 @@ describe("harness HTTP API", () => {
       prompt: null,
       keepVectors: false,
       microVectorsEnabled: false,
+      bootstrapHybrid: false,
       vectorArchiveDir: null,
       envOverride: null,
     });
@@ -5279,6 +5282,7 @@ describe("harness HTTP API", () => {
       prompt: null,
       keepVectors: false,
       microVectorsEnabled: false,
+      bootstrapHybrid: false,
       vectorArchiveDir: null,
       envOverride: null,
     });
@@ -5292,6 +5296,7 @@ describe("harness HTTP API", () => {
       prompt: null,
       keepVectors: false,
       microVectorsEnabled: false,
+      bootstrapHybrid: false,
       vectorArchiveDir: null,
       envOverride: null,
     });

@@ -78,3 +78,15 @@ export const DEFAULT_EXTRACTION_PROMPT =
   "This recap must work for any local task (code, research, ops), not one domain. " +
   "Ignore [tool …] chips. Quote verbatim. Do not invent. Do not invent the next patch or feature.";
 
+/** M1 thin bootstrap pack hard budget (chars).
+ * ~8% of Compact around ceiling tokens × 4 chars/token, clamped to 800–6000.
+ * Stays inside the plan's ~5–15% of ceiling band while remaining much thinner than fat V. */
+export const BOOTSTRAP_BUDGET_FRACTION = 0.08;
+export const BOOTSTRAP_BUDGET_CHARS_MIN = 800;
+export const BOOTSTRAP_BUDGET_CHARS_MAX = 6_000;
+
+export function bootstrapPackBudgetChars(ceilingTokens: number): number {
+  const chars = Math.floor(Math.max(0, ceilingTokens) * BOOTSTRAP_BUDGET_FRACTION * 4);
+  return Math.max(BOOTSTRAP_BUDGET_CHARS_MIN, Math.min(BOOTSTRAP_BUDGET_CHARS_MAX, chars));
+}
+

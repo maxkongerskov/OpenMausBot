@@ -8,6 +8,8 @@ import { join, normalize, resolve } from "node:path";
 
 import { DEFAULT_EXTRACTION_PROMPT } from "../shared/compact-around.ts";
 
+export { bootstrapPackBudgetChars } from "../shared/compact-around.ts";
+
 /** Soft sanity cap when folding a live notebook stack into V (tens of k chars OK). */
 const NOTEBOOK_FOLD_SOFT_CAP_CHARS = 48_000;
 /** ~30 token floor for a folded notebook vector. */
@@ -217,6 +219,144 @@ export function resolveOutgoingTurn(input: {
     transcript: [],
   };
 }
+
+const BOOTSTRAP_PAGE_SEP = /\n(?:---)\n/;
+const BOOTSTRAP_HEADING =
+  /^(?:#{1,3}\s*)?(?:\*\*)?(Goal|This turn|Verified facts|Addresses|Landmines|Constraints|Open|Next action|Next\b)\b/i;
+
+type BootstrapSectionKey =
+  | "goal"
+  | "open"
+  | "addresses"
+  | "landmines"
+  | "facts"
+  | "constraints"
+  | "thisTurn";
+
+function bootstrapSectionKey(name: string): BootstrapSectionKey | null {
+  const n = name.toLowerCase();
+  if (n.startsWith("goal")) return "goal";
+  if (n.startsWith("this turn")) return "thisTurn";
+  if (n.startsWith("verified")) return "facts";
+  if (n.startsWith("address")) return "addresses";
+  if (n.startsWith("landmine")) return "landmines";
+  if (n.startsWith("constraint")) return "constraints";
+  if (/^open\b|^next\b|next action/.test(n)) return "open";
+  return null;
+}
+
+/** Latest non-empty body per Keep chatting heading across notebook pages. */
+export function latestBootstrapSections(notebook: string): Partial<Record<BootstrapSectionKey, string>> {
+  const out: Partial<Record<BootstrapSectionKey, string>> = {};
+  const pages = notebook.split(BOOTSTRAP_PAGE_SEP);
+  for (const page of pages) {
+    const lines = page.split("\n");
+    let key: BootstrapSectionKey | null = null;
+    let buf: string[] = [];
+    const flush = () => {
+      if (!key) return;
+      const body = buf.join("\n").trim();
+      if (body) out[key] = body;
+      buf = [];
+    };
+    for (const line of lines) {
+      const head = line.trim().match(BOOTSTRAP_HEADING);
+      if (head) {
+        flush();
+        key = bootstrapSectionKey(head[1] ?? "");
+        buf = [];
+        continue;
+      }
+      if (key) buf.push(line);
+    }
+    flush();
+  }
+  return out;
+}
+
+function formatBootstrapSection(title: string, body: string): string {
+  const cleaned = body.trim();
+  if (!cleaned) return "";
+  return `${title}\n${cleaned}`;
+}
+
+function appendWithinBudget(base: string, addition: string, budgetChars: number, truncate: boolean): string {
+  const part = addition.trim();
+  if (!part) return base;
+  const sep = base ? "\n\n" : "";
+  const full = `${base}${sep}${part}`;
+  if (full.length <= budgetChars) return full;
+  if (!truncate) return base;
+  const room = budgetChars - base.length - sep.length;
+  if (room < 24) return base;
+  return `${base}${sep}${part.slice(0, Math.max(0, room - 1)).trimEnd()}…`;
+}
+
+/**
+ * Thin bootstrap pack for compact inject (M1). Priority:
+ * P0 Goal / Open / Addresses / Landmines — never dropped for size
+ * P1 Verified facts + short catalog hints — prefer keep
+ * P2 last-N crumbs / This turn — truncate first
+ */
+export function buildBootstrapPack(input: {
+  notebook: string;
+  budgetChars: number;
+  userText?: string;
+  lastAssistantText?: string;
+  catalogHints?: string[];
+}): string {
+  const sections = latestBootstrapSections(input.notebook ?? "");
+  const goal =
+    sections.goal?.trim() ||
+    (input.userText?.trim() ? forwardNextFromLiveAsk(input.userText) : "");
+  const open =
+    sections.open?.trim() ||
+    (input.userText?.trim() ? forwardNextFromLiveAsk(input.userText) : "");
+  const p0Parts = [
+    formatBootstrapSection("Goal", goal),
+    formatBootstrapSection("Open", open),
+    formatBootstrapSection("Addresses", sections.addresses ?? ""),
+    formatBootstrapSection("Landmines", sections.landmines ?? ""),
+  ].filter(Boolean);
+  const p0 = p0Parts.join("\n\n");
+
+  const p1Parts = [
+    formatBootstrapSection("Verified facts", sections.facts ?? ""),
+    input.catalogHints?.length
+      ? formatBootstrapSection(
+          "Catalog",
+          input.catalogHints
+            .map((h) => h.trim())
+            .filter(Boolean)
+            .slice(0, 12)
+            .map((h) => (h.startsWith("-") ? h : `- ${h}`))
+            .join("\n"),
+        )
+      : "",
+  ].filter(Boolean);
+  const p1 = p1Parts.join("\n\n");
+
+  const crumbBits: string[] = [];
+  if (sections.thisTurn?.trim()) crumbBits.push(sections.thisTurn.trim());
+  if (input.lastAssistantText?.trim()) {
+    const clip = input.lastAssistantText.trim().replace(/\s+/g, " ");
+    crumbBits.push(clip.length > 280 ? `${clip.slice(0, 280).trimEnd()}…` : clip);
+  }
+  const p2 = crumbBits.length ? formatBootstrapSection("This turn", crumbBits.join("\n")) : "";
+
+  // P0 is never truncated, even when it alone exceeds the hard budget.
+  let pack = p0;
+  const budget = Math.max(0, Math.floor(input.budgetChars));
+  if (pack.length >= budget) {
+    return sanitizeForwardOnlyVector(pack, input.userText ?? "");
+  }
+  // P1 prefer-keep (may truncate if needed after P0).
+  pack = appendWithinBudget(pack, p1, budget, true);
+  // P2 truncate first / leftover room only.
+  pack = appendWithinBudget(pack, p2, budget, true);
+  return sanitizeForwardOnlyVector(pack, input.userText ?? "");
+}
+
 
 const TOOL_CHIP = /^\[tool\s.+\s→\s/;
 const TOOL_CHIP_PARSE = /^\[tool\s+(.+?)\s+→\s+(ok|failed|running)\]\s*$/i;

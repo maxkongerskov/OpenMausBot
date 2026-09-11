@@ -83,6 +83,8 @@ const compactionConfigSchema = z.object({
   keepVectors: z.boolean().optional(),
   /** Opt-in per-turn micro notes under each bot/task. Absent/false = off. */
   microVectorsEnabled: z.boolean().optional(),
+  /** Opt-in thin bootstrap pack on compact instead of fat folded V. Absent/false = V path. */
+  bootstrapHybrid: z.boolean().optional(),
   vectorArchiveDir: z
     .string()
     .max(1024)
@@ -361,6 +363,8 @@ export interface AppConfig {
     keepVectors?: boolean;
     /** Opt-in running notebook between compact cycles. Absent/false = off. */
     microVectorsEnabled?: boolean;
+    /** Opt-in thin bootstrap pack on compact (M0/M1). Absent/false = fat V path. */
+    bootstrapHybrid?: boolean;
     vectorArchiveDir?: string | null;
   };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
@@ -519,6 +523,11 @@ export function keepVectorsEnabled(cfg: AppConfig): boolean {
 /** Opt-in micro state vectors (per-task notebook). Absent/false = off. */
 export function microVectorsEnabled(cfg: AppConfig): boolean {
   return cfg.compaction?.microVectorsEnabled === true;
+}
+
+/** Opt-in bootstrap hybrid on compact inject. Absent/false = today's fat V path. */
+export function bootstrapHybridEnabled(cfg: AppConfig): boolean {
+  return cfg.compaction?.bootstrapHybrid === true;
 }
 
 /** Custom archive folder, or null to use each bot's private state-vectors dir. */
