@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   AUTO_COMPACT_AROUND_TOKENS,
   COMPACT_AROUND_PRESETS,
-  compactFireTokens,
   DEFAULT_EXTRACTION_PROMPT,
   formatTokenK,
   VECTOR_BUDGET_PRESETS,
@@ -53,7 +52,6 @@ export function CompactAroundSettings() {
     }
   };
 
-  const fireOf = (ceiling: number) => formatTokenK(compactFireTokens(ceiling));
   const aroundOff = !enabled;
   const aroundAuto = enabled && compactAround === null;
   const vectorAuto = vectorBudget === null;
@@ -72,22 +70,24 @@ export function CompactAroundSettings() {
     <div className="flex flex-col gap-5">
       <div className="text-[13px] leading-relaxed text-ink-secondary">
         <p>
-          Keep this chat going on a local model without starting over. When the model fills up, OpenMausBot
-          saves a short recap, gives it a fresh start, and leaves your conversation in place. A line in the
-          thread marks the refresh. You do not restart the model yourself.
+          Keep this chat going on a local model without starting over. The size below is a{" "}
+          <span className="text-ink">hard cap</span> on the live backend context: when fill hits that
+          number, OpenMausBot writes a state-vector recap,{" "}
+          <span className="text-ink">resets the host session</span>, and leaves your conversation in
+          place. A line in the thread marks the refresh.
         </p>
         <p className="mt-2">
-          Match the size to your computer: a smaller number refreshes more often and stays lighter on memory.
-          A larger number waits longer. Auto is a good default. Off turns this off completely and leaves
-          local chats as they were before Keep chatting. Cloud chats are unchanged.
+          Pick a smaller cap if you want lighter memory use; a larger cap lets each stretch run longer
+          before a forced reset. Auto is a good default. Off turns this off completely and leaves local
+          chats as they were before Keep chatting. Cloud chats are unchanged.
         </p>
       </div>
 
       <div className="flex flex-col gap-2">
-        <div className="text-[13px] font-medium text-ink">When to refresh</div>
+        <div className="text-[13px] font-medium text-ink">Context size limit</div>
         <div
           role="radiogroup"
-          aria-label="When to refresh"
+          aria-label="Context size limit"
           aria-disabled={envOverride !== null}
           className="flex flex-wrap overflow-hidden rounded-lg border border-hairline/40"
         >
@@ -141,10 +141,10 @@ export function CompactAroundSettings() {
           {envOverride !== null
             ? `A computer setting is overriding this (${formatTokenK(envOverride)}).`
             : aroundOff
-              ? "Keep chatting is off. Local chats will not refresh with a recap."
+              ? "Keep chatting is off. Local chats will not force a recap or reset the host session."
               : aroundAuto
-                ? "Auto refreshes at a comfortable size for most computers."
-                : `Refreshes around ${fireOf(compactAround!)}. This chat stays; a line appears in the thread.`}
+                ? "Auto caps the live backend context at a comfortable size for most computers, then forces a reset with a recap."
+                : `Hard cap at ${formatTokenK(compactAround!)}. At that size the host session resets with a recap; this chat stays and a line appears in the thread.`}
         </p>
       </div>
 
@@ -178,7 +178,7 @@ export function CompactAroundSettings() {
                 role="radio"
                 aria-checked={vectorBudget === preset}
                 disabled={detailsDisabled || over}
-                title={over ? `Limited to the refresh size (${formatTokenK(ceilingCap)})` : undefined}
+                title={over ? `Limited to the context size limit (${formatTokenK(ceilingCap)})` : undefined}
                 onClick={() => void patch({ vectorBudget: preset })}
                 className={cn(
                   "border-l border-hairline/40 px-3 py-1.5 text-[13px] tabular-nums",
@@ -192,8 +192,8 @@ export function CompactAroundSettings() {
           })}
         </div>
         <p className="text-[12px] leading-relaxed text-ink-secondary">
-          The recap that carries the chat forward. Auto is enough for most people. Raise it if the bot forgets
-          the next step after a refresh.
+          The recap injected into the fresh host session. Auto is enough for most people. Raise it if the bot
+          forgets the next step after a reset.
         </p>
       </div>
 
