@@ -37,7 +37,10 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
   // Clicking the open row again collapses it; picking another row expands that one.
-  const [collapsed, setCollapsed] = useState(false);
+  // Accordion starts fully collapsed on every open (component remounts with
+  // settingsOpen). Only an explicit `section` on the open action expands one
+  // row (usage chip, identity menu, etc.).
+  const [collapsed, setCollapsed] = useState(!state.botSettingsExpandAccordion);
   const q = query.trim().toLowerCase();
   const visibleSections = BOT_SECTIONS.filter((entry) => sectionMatches(entry, q));
 

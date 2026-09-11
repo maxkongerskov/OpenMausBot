@@ -632,6 +632,8 @@ export interface AppState {
   /** the guided tour on the live interface that follows the welcome flow */
   tourOpen: boolean;
   botSettingsSection: BotSettingsSection;
+  /** True only when the open action named a section — accordion expands that row. */
+  botSettingsExpandAccordion: boolean;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
@@ -1468,6 +1470,9 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         settingsOpen: open,
         botSettingsSection: action.section ?? state.botSettingsSection,
+        // Mascot / bare open omits `section` → accordion stays fully collapsed.
+        // Deep links that pass `section` expand that one row on mount.
+        botSettingsExpandAccordion: open ? action.section !== undefined : false,
         // A centered modal sits over the side panels, so opening it leaves
         // the computer panel and inspector as they were — the computer
         // panel's own gear opens this dialog, and closing the panel under it
@@ -1816,6 +1821,7 @@ export const initialState: AppState = {
   welcomeOpen: false,
   tourOpen: false,
   botSettingsSection: "overview",
+  botSettingsExpandAccordion: false,
   screens: {},
   provisioning: {},
   deletingBots: {},
