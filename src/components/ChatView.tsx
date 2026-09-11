@@ -1412,10 +1412,10 @@ function UsageChip({ bot }: { bot: Bot }) {
   const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
   const detail = local
     ? [
-        `This chat is ${formatTokens(fill ?? 0)} of ${formatTokens(ceiling)} on the local model.`,
+        `Live backend context: ${formatTokens(fill ?? 0)} of ${formatTokens(ceiling)} (hard cap).`,
         keepChattingOn
-          ? "Refreshes near 80%. Lifetime spend is in Settings → Usage."
-          : "Keep chatting is off — this chat will not refresh with a recap. Lifetime spend is in Settings → Usage.",
+          ? "At the cap, OpenMausBot forces a recap and resets the host session. This chat stays. Lifetime spend is in Settings → Usage."
+          : "Keep chatting is off — no forced recap or host reset. Lifetime spend is in Settings → Usage.",
       ].join("\n")
     : !usage
       ? ""
