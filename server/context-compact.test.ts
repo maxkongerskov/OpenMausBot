@@ -12,6 +12,7 @@ import {
   compactSession,
   demotePadBlobsInVector,
   extractNextBlock,
+  decideSettledPromptTokens,
   fillTokensFor,
   forwardNextFromLiveAsk,
   harvestAddresses,
@@ -263,11 +264,120 @@ describe("compactSession", () => {
   });
 });
 
+describe("decideSettledPromptTokens", () => {
+  it("passes through a plausible report and clears the ignore flag", () => {
+    expect(
+      decideSettledPromptTokens({
+        reported: 12_000.7,
+        ceiling: 64_000,
+        currentSpt: 8_000,
+        inject: true,
+      }),
+    ).toEqual({
+      lastReported: 12_000,
+      nextSpt: 12_000,
+      ignoreReportedPromptFill: false,
+    });
+  });
+
+  it("treats inject reports >1.25x ceiling and above SPT as inflated", () => {
+    expect(
+      decideSettledPromptTokens({
+        reported: 100_000,
+        ceiling: 64_000,
+        currentSpt: 1_200,
+        inject: true,
+      }),
+    ).toEqual({
+      lastReported: 100_000,
+      nextSpt: null,
+      ignoreReportedPromptFill: true,
+    });
+  });
+
+  it("treats inject reports past ceiling while SPT is still low as inflated", () => {
+    expect(
+      decideSettledPromptTokens({
+        reported: 70_000,
+        ceiling: 64_000,
+        currentSpt: 40_000, // < 0.8 * 64k
+        inject: true,
+      }),
+    ).toEqual({
+      lastReported: 70_000,
+      nextSpt: null,
+      ignoreReportedPromptFill: true,
+    });
+  });
+
+  it("does not inflate when not inject, even if huge", () => {
+    expect(
+      decideSettledPromptTokens({
+        reported: 200_000,
+        ceiling: 64_000,
+        currentSpt: 1_000,
+        inject: false,
+      }),
+    ).toEqual({
+      lastReported: 200_000,
+      nextSpt: 200_000,
+      ignoreReportedPromptFill: false,
+    });
+  });
+
+  it("does not inflate without a finite current SPT", () => {
+    expect(
+      decideSettledPromptTokens({
+        reported: 200_000,
+        ceiling: 64_000,
+        currentSpt: null,
+        inject: true,
+      }),
+    ).toEqual({
+      lastReported: 200_000,
+      nextSpt: 200_000,
+      ignoreReportedPromptFill: false,
+    });
+  });
+});
+
 describe("fillTokensFor", () => {
   it("adds this turn's paste on top of the last native-session prompt size", () => {
     expect(fillTokensFor({ sessionPromptTokens: 12_345, transcript, userText: "x" })).toBe(12_345 + 1);
     expect(fillTokensFor({ sessionPromptTokens: 12_345, transcript, userText: "abcd" })).toBe(12_345 + 1);
     expect(fillTokensFor({ transcript, userText: "abcd" })).toBeGreaterThan(0);
+  });
+
+  it("takes max(SPT, lastReported) when not ignoring reported fill", () => {
+    expect(
+      fillTokensFor({
+        sessionPromptTokens: 1_000,
+        lastReportedPromptTokens: 5_000,
+        ignoreReportedPromptFill: false,
+        transcript,
+        userText: "x",
+      }),
+    ).toBe(5_000 + 1);
+    expect(
+      fillTokensFor({
+        sessionPromptTokens: 9_000,
+        lastReportedPromptTokens: 5_000,
+        transcript,
+        userText: "x",
+      }),
+    ).toBe(9_000 + 1);
+  });
+
+  it("ignores lastReported when ignoreReportedPromptFill is set", () => {
+    expect(
+      fillTokensFor({
+        sessionPromptTokens: 1_200,
+        lastReportedPromptTokens: 100_000,
+        ignoreReportedPromptFill: true,
+        transcript,
+        userText: "x",
+      }),
+    ).toBe(1_200 + 1);
   });
 });
 

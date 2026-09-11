@@ -1022,18 +1022,61 @@ export async function compactSession(input: {
   return { summary, turnText: injectStateVector(summary, input.userText) };
 }
 
+export function decideSettledPromptTokens(input: {
+  reported: number;
+  ceiling: number;
+  currentSpt?: number | null;
+  inject: boolean;
+}): {
+  lastReported: number;
+  nextSpt: number | null; // null = leave SPT unchanged
+  ignoreReportedPromptFill: boolean;
+} {
+  const lastReported = Number.isFinite(input.reported) ? Math.max(0, Math.trunc(input.reported)) : 0;
+  const current = input.currentSpt;
+  const inflated =
+    input.inject &&
+    typeof current === "number" &&
+    Number.isFinite(current) &&
+    ((lastReported > input.ceiling * 1.25 && lastReported > current) ||
+      (lastReported > input.ceiling && current < input.ceiling * 0.8));
+  if (inflated) {
+    return { lastReported, nextSpt: null, ignoreReportedPromptFill: true };
+  }
+  return {
+    lastReported,
+    nextSpt: lastReported,
+    ignoreReportedPromptFill: false,
+  };
+}
+
 export function fillTokensFor(input: {
   sessionPromptTokens?: number | null;
+  lastReportedPromptTokens?: number | null;
+  ignoreReportedPromptFill?: boolean;
   transcript: FacingTurn[];
   userText: string;
 }): number {
   // SPT is the last settled prompt fill. Add this turn's paste so a fat
   // message can trip Auto compact on the same turn (every-message recycle).
+  // After compact, ignore inflated raw host prompt_tokens until a plausible
+  // settle; otherwise take max(SPT, lastReported) so the chip tracks live size.
   const paste = estimateTokens(input.userText);
-  if (typeof input.sessionPromptTokens === "number" && Number.isFinite(input.sessionPromptTokens) && input.sessionPromptTokens > 0) {
-    return Math.floor(input.sessionPromptTokens) + paste;
+  let base =
+    typeof input.sessionPromptTokens === "number" &&
+    Number.isFinite(input.sessionPromptTokens) &&
+    input.sessionPromptTokens > 0
+      ? Math.floor(input.sessionPromptTokens)
+      : estimateTranscriptTokensFor(input.transcript);
+  if (
+    !input.ignoreReportedPromptFill &&
+    typeof input.lastReportedPromptTokens === "number" &&
+    Number.isFinite(input.lastReportedPromptTokens) &&
+    input.lastReportedPromptTokens > 0
+  ) {
+    base = Math.max(base, Math.floor(input.lastReportedPromptTokens));
   }
-  return estimateTranscriptTokensFor(input.transcript) + paste;
+  return base + paste;
 }
 
 function estimateTranscriptTokensFor(turns: FacingTurn[]): number {

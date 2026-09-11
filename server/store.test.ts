@@ -618,6 +618,21 @@ describe("Store", () => {
     expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.sessionPromptTokens).toBe(800);
   });
 
+  it("setLastReportedPromptTokens persists and clears at 0; ignore flag is runtime-only", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.setLastReportedPromptTokens(bot.id, bot.threadId, 99_000);
+    store.setIgnoreReportedPromptFill(bot.id, bot.threadId, true);
+    expect(store.taskByThread(bot.id, bot.threadId)?.lastReportedPromptTokens).toBe(99_000);
+    expect(store.taskByThread(bot.id, bot.threadId)?.ignoreReportedPromptFill).toBe(true);
+    const reloaded = new Store(selection);
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.lastReportedPromptTokens).toBe(99_000);
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.ignoreReportedPromptFill).toBeUndefined();
+    reloaded.setLastReportedPromptTokens(bot.id, bot.threadId, 0);
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.lastReportedPromptTokens).toBeUndefined();
+    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.lastReportedPromptTokens).toBeUndefined();
+  });
+
   it("seedIfEmpty creates exactly one starter bot, once", () => {
     const store = new Store(selection);
     store.seedIfEmpty();
