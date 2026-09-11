@@ -38,6 +38,7 @@ import {
   probeLocalInjects,
   resolveInjectId,
 } from "./local-inject.ts";
+import { hostProxy } from "../context-host-proxy.ts";
 import { appendNative } from "./native.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -916,6 +917,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
 
       const env = environment(turnModel);
+      // After compact, hostProxy holds the state-vector rewrite. Point Claude's
+      // inject at that proxy so Unsloth/local hosts see vector+ask — Claude does
+      // not read `transcript`, and a direct Unsloth URL skips the rewrite.
+      const rewriteRoute = hostProxy.routeFor(threadId);
+      if (rewriteRoute && env.ANTHROPIC_BASE_URL) {
+        env.ANTHROPIC_BASE_URL = rewriteRoute.baseUrl.replace(/\/v1\/?$/, "");
+        env.ANTHROPIC_AUTH_TOKEN = rewriteRoute.authorization;
+        env.ANTHROPIC_API_KEY = rewriteRoute.authorization;
+      }
       // Our approvals and browser credentials expire at the user-turn
       // boundary. Native background workers cannot outlive that boundary;
       // parallel bot work must use the harness's durable delegate_bot path.
