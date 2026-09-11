@@ -214,12 +214,13 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { decodeInjectId } from "./drivers/local-inject.ts";
-import { advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
+import { AUTO_COMPACT_AROUND_TOKENS, advertisedWindowFor, contextCeiling, envCeilingOverride, probeMemory } from "./context-ceiling.ts";
 import {
   appendMidTaskContinuitySystem,
   clipCompactUserText,
   collectCompactSeedDirs,
   compactSession,
+  decideSettledPromptTokens,
   existingDirectory,
   fillTokensFor,
   generateSideText,
@@ -3365,13 +3366,26 @@ bus.subscribe((event: RuntimeEvent) => {
         });
         noteSpend(DATA_DIR, event.cost ?? null);
         if (typeof tokens?.input === "number") {
-          // Local hosts report this turn's prompt_tokens (live fill). ACP
-          // agents sometimes report the whole session instead — a jump past
-          // the recycle window is cumulative noise. Clamp to the ceiling so
-          // Auto compact still sees a full window (don't leave SPT stuck mid-range).
-          // Honest live fill — never clamp to Compact around. A jump past the
-          // ceiling is exactly when hard-cap recycle must see the real size.
-          store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
+          // Chip fill vs hard-cap: SPT is the chip/soft-fill baseline (post-compact
+          // estimate, or a plausible settle). lastReported keeps raw host
+          // prompt_tokens. Inflated cumulative Unsloth/local-inject reports after
+          // compact must not overwrite SPT — decideSettledPromptTokens gates that
+          // and sets ignoreReportedPromptFill so fillTokensFor stays on SPT.
+          // Hard-cap recycle still sees real size via lastReported / shouldCompact
+          // inputs; we do not clamp SPT to the ceiling here.
+          const inject = Boolean(decodeInjectId(selection.model));
+          const ceiling = compactAroundTokens(cfg) ?? AUTO_COMPACT_AROUND_TOKENS;
+          const decision = decideSettledPromptTokens({
+            reported: tokens.input,
+            ceiling,
+            currentSpt: settledTask?.sessionPromptTokens,
+            inject,
+          });
+          store.setLastReportedPromptTokens(bot.id, event.threadId, decision.lastReported);
+          if (decision.nextSpt != null) {
+            store.setSessionPromptTokens(bot.id, event.threadId, decision.nextSpt);
+          }
+          store.setIgnoreReportedPromptFill(bot.id, event.threadId, decision.ignoreReportedPromptFill);
         }
         // Opt-in rolling notebook: side LLM harvests a rich turn page; APPEND to live
         // notebook.md (never rewrite prior pages). Prefer local inject over provider
@@ -4223,6 +4237,8 @@ async function startTurn(
   });
   const fill = fillTokensFor({
     sessionPromptTokens: task.sessionPromptTokens,
+    lastReportedPromptTokens: task.lastReportedPromptTokens,
+    ignoreReportedPromptFill: task.ignoreReportedPromptFill,
     transcript,
     userText: userPrompt,
   });
@@ -4689,6 +4705,8 @@ async function startTurn(
           },
         });
         store.setSessionPromptTokens(bot.id, threadId, estimateTokens(result.summary) + estimateTokens(clipCompactUserText(userPrompt)));
+        store.setLastReportedPromptTokens(bot.id, threadId, 0);
+        store.setIgnoreReportedPromptFill(bot.id, threadId, true);
         if (keepVectorsEnabled(cfg)) {
           archiveStateVector({
             summary: result.summary,

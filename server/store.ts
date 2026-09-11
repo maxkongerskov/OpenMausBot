@@ -286,6 +286,10 @@ export interface TaskRecord {
   /** Last native-session prompt size in tokens, overwritten each settled
    * turn (not summed). Drives compaction. Absent on older records. */
   sessionPromptTokens?: number;
+  /** Raw host prompt_tokens from last settle. Persisted. */
+  lastReportedPromptTokens?: number;
+  /** After compact, ignore raw for fillTokensFor until a plausible usage update. Runtime only. */
+  ignoreReportedPromptFill?: boolean;
 }
 
 export interface TaskUsage {
@@ -898,7 +902,10 @@ export class Store {
   }
 
   private saveBots(bots: BotRecord[] = this.bots) {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2));
+    writeFileAtomic(BOTS_FILE, JSON.stringify(bots.map((bot) => ({
+      ...bot,
+      tasks: bot.tasks?.map(({ ignoreReportedPromptFill: _ignore, ...task }) => task),
+    })), null, 2));
   }
 
   private saveGroups() {
@@ -1611,6 +1618,33 @@ export class Store {
     const clean = Number.isFinite(tokens) ? Math.max(0, Math.trunc(tokens)) : 0;
     if (task.sessionPromptTokens === clean) return;
     task.sessionPromptTokens = clean;
+    this.saveBots();
+    this.emit({ type: "bot", botId });
+  }
+
+  /** Raw host prompt_tokens from last settle. Passing 0/undefined clears (delete). */
+  setLastReportedPromptTokens(botId: string, threadId: string, tokens?: number) {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return;
+    if (tokens === undefined || !Number.isFinite(tokens) || tokens <= 0) {
+      if (task.lastReportedPromptTokens === undefined) return;
+      delete task.lastReportedPromptTokens;
+    } else {
+      const clean = Math.trunc(tokens);
+      if (task.lastReportedPromptTokens === clean) return;
+      task.lastReportedPromptTokens = clean;
+    }
+    this.saveBots();
+    this.emit({ type: "bot", botId });
+  }
+
+  /** After compact, ignore raw host prompt_tokens for chip fill until plausible. Runtime. */
+  setIgnoreReportedPromptFill(botId: string, threadId: string, ignore: boolean) {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return;
+    if (Boolean(task.ignoreReportedPromptFill) === Boolean(ignore)) return;
+    if (ignore) task.ignoreReportedPromptFill = true;
+    else delete task.ignoreReportedPromptFill;
     this.saveBots();
     this.emit({ type: "bot", botId });
   }
