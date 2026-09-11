@@ -228,7 +228,6 @@ import {
   existingDirectory,
   fillTokensFor,
   generateSideText,
-  harvestAddresses,
   injectStateVector,
   latestBootstrapSections,
   resolveOutgoingTurn,

@@ -9,7 +9,6 @@ import {
   clipCompactUserText,
   compactedProviderUserTurns,
   COMPACT_USER_CLIP_CHARS,
-  MID_TASK_CONTINUITY_SYSTEM,
   stubBulkPadText,
 } from "./context-compact.ts";
 import { decodeInjectId, hostApiKey, localHost } from "./drivers/local-inject.ts";
