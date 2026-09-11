@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clipFromTail, estimateTokens, modelFacingTurns, shouldCompact, vectorBudget, type FacingTurn } from "./context-rebuild.ts";
+import { clipFromTail, estimateTokens, modelFacingTurns, shouldCompact, usersAfterCompaction, vectorBudget, type FacingTurn } from "./context-rebuild.ts";
 import type { Message } from "./store.ts";
 
 const msg = (partial: Partial<Message> & Pick<Message, "id" | "kind" | "role">): Message => ({
@@ -85,19 +85,39 @@ describe("shouldCompact", () => {
     expect(shouldCompact({ fillTokens: 9_000, ceilingTokens: 10_000, turnCount: 1 })).toBe(false);
   });
 
-  it("does not fire on the first user turn after a recycle", () => {
-    expect(shouldCompact({ fillTokens: 14_000, ceilingTokens: 32_000, turnCount: 6, turnsSinceCompact: 1 })).toBe(
+  it("does not soft-fire until there is a user turn after the recycle", () => {
+    // turnsSinceCompact counts users *after* firstKeptId (0 = just recycled).
+    expect(shouldCompact({ fillTokens: 14_000, ceilingTokens: 32_000, turnCount: 6, turnsSinceCompact: 0 })).toBe(
       false,
     );
-    expect(shouldCompact({ fillTokens: 26_000, ceilingTokens: 32_000, turnCount: 6, turnsSinceCompact: 2 })).toBe(
+    expect(shouldCompact({ fillTokens: 26_000, ceilingTokens: 32_000, turnCount: 6, turnsSinceCompact: 1 })).toBe(
       true,
     );
+  });
+
+  it("hard-fires at the Compact around ceiling even right after a recycle", () => {
+    expect(shouldCompact({ fillTokens: 32_000, ceilingTokens: 32_000, turnCount: 6, turnsSinceCompact: 0 })).toBe(
+      true,
+    );
+    expect(shouldCompact({ fillTokens: 40_000, ceilingTokens: 32_000, turnCount: 1 })).toBe(true);
   });
 
   it("fires on RAM pressure only once the session is already half full", () => {
     const tight = { totalBytes: 36 * 1024 ** 3, freeBytes: 200 * 1024 ** 2 };
     expect(shouldCompact({ fillTokens: 1_000, ceilingTokens: 10_000, turnCount: 6, memory: tight })).toBe(false);
     expect(shouldCompact({ fillTokens: 5_000, ceilingTokens: 10_000, turnCount: 6, memory: tight })).toBe(true);
+  });
+});
+
+describe("usersAfterCompaction", () => {
+  it("excludes the compacting firstKeptId user turn", () => {
+    const transcript = [
+      { role: "user", id: "u-compact" },
+      { role: "assistant", id: "a1" },
+      { role: "user", id: "u2" },
+    ];
+    expect(usersAfterCompaction(transcript, { firstKeptId: "u-compact" })).toBe(1);
+    expect(usersAfterCompaction(transcript, null)).toBeUndefined();
   });
 });
 

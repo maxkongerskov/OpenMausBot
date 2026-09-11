@@ -238,7 +238,7 @@ import {
   trackNotebookUpdate,
 } from "./micro-vectors.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
-import { estimateTokens, modelFacingTurns, shouldCompact, vectorBudget } from "./context-rebuild.ts";
+import { estimateTokens, modelFacingTurns, shouldCompact, usersAfterCompaction, vectorBudget } from "./context-rebuild.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { extractTurnImages } from "./turn-images.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
@@ -3370,16 +3370,9 @@ bus.subscribe((event: RuntimeEvent) => {
           // agents sometimes report the whole session instead — a jump past
           // the recycle window is cumulative noise. Clamp to the ceiling so
           // Auto compact still sees a full window (don't leave SPT stuck mid-range).
-          const inject = decodeInjectId(store.bot(bot.id)?.modelSelection?.model);
-          const ceiling = compactAroundTokens(cfg) ?? AUTO_COMPACT_AROUND_TOKENS;
-          const current = store.taskByThread(bot.id, event.threadId)?.sessionPromptTokens;
-          const inflated =
-            Boolean(inject) &&
-            typeof current === "number" &&
-            tokens.input > ceiling * 1.25 &&
-            tokens.input > current;
-          if (inflated) store.setSessionPromptTokens(bot.id, event.threadId, ceiling);
-          else store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
+          // Honest live fill — never clamp to Compact around. A jump past the
+          // ceiling is exactly when hard-cap recycle must see the real size.
+          store.setSessionPromptTokens(bot.id, event.threadId, tokens.input);
         }
         // Opt-in rolling notebook: side LLM harvests a rich turn page; APPEND to live
         // notebook.md (never rewrite prior pages). Prefer local inject over provider
@@ -4243,9 +4236,7 @@ async function startTurn(
       ceilingTokens: ceiling.tokens,
       turnCount: transcript.length,
       memory,
-      turnsSinceCompact: facing.lastCompaction
-        ? transcript.filter((turn) => turn.role === "user").length
-        : undefined,
+      turnsSinceCompact: usersAfterCompaction(transcript, facing.lastCompaction),
     });
 
   const persona = [
@@ -4642,10 +4633,9 @@ async function startTurn(
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
-      // Compaction refreshes the *provider* context window. The bot/engine
-      // session (ACP resumeCursor) stays. A loopback proxy rewrites the
-      // host's chat/completions body to the state vector + the compacted
-      // user turn and everything after it (later chat must stay visible).
+      // Compaction refreshes the provider context: clear this engine's ACP
+      // resumeCursor (session/new) and rewrite host chat bodies to the state
+      // vector + live user turn. The OpenMausBot UI transcript stays whole.
       let outgoing = resolveOutgoingTurn({
         compacted: false,
         summary: "",
@@ -4721,18 +4711,17 @@ async function startTurn(
         }
         bindLocalHostRewrite({ threadId, modelId: model, vector: result.summary, userText: userPrompt });
         await hostProxy.ensureListening();
-        // Transcript-replay API drivers have no ACP session to keep; they
-        // send the vector as the provider messages array.
-        if (instance.driverKind === "grok") {
-          outgoing = resolveOutgoingTurn({
-            compacted: true,
-            summary: result.summary,
-            userText: userPrompt,
-            turnText,
-            resumeCursor: initialResumeCursor,
-            transcript,
-          });
-        }
+        // Drop the native session so the next sendTurn starts fresh with the
+        // vector (Claude/Codex/ACP) — Compact around is a hard backend reset.
+        store.clearResumeCursor(bot.id, instanceId, threadId);
+        outgoing = resolveOutgoingTurn({
+          compacted: true,
+          summary: result.summary,
+          userText: userPrompt,
+          turnText,
+          resumeCursor: undefined,
+          transcript,
+        });
       } else if (compactionEnabled(cfg) && priorRewrite?.vector) {
         bindLocalHostRewrite({
           threadId,
