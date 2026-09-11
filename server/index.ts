@@ -229,6 +229,7 @@ import {
   generateSideText,
   harvestAddresses,
   injectStateVector,
+  latestBootstrapSections,
   resolveOutgoingTurn,
 } from "./context-compact.ts";
 import { archiveStateVector } from "./vector-archive.ts";
@@ -242,6 +243,12 @@ import {
   readTaskNotebook,
   trackNotebookUpdate,
 } from "./micro-vectors.ts";
+import {
+  attachRetrievedChunks,
+  buildNotebookCatalogHints,
+  keywordRetrieve,
+  readLatestNotebookArchive,
+} from "./bootstrap-rag.ts";
 import { bindLocalHostRewrite, hostProxy } from "./context-host-proxy.ts";
 import { estimateTokens, modelFacingTurns, shouldCompact, usersAfterCompaction, vectorBudget } from "./context-rebuild.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh } from "./turn-context.ts";
@@ -342,7 +349,7 @@ import { isBotPackage, packageAgentAsMember, parseBotPackage, renderBotPackageMa
 import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./team-manifest.ts";
 import { readThreadEvents } from "./thread-events.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
-import { memberTurnSelection } from "./member-turn.ts";
+import { memberTurnSelection, roomSpeakerSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
@@ -4677,18 +4684,40 @@ async function startTurn(
           [...transcript].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
         let result: { summary: string; turnText: string };
         if (bootstrapHybridEnabled(cfg)) {
-          // M1: thin P0-priority bootstrap instead of fat folded V. V path kept when flag off.
+          // M1+M3: thin P0 bootstrap + catalog + keyword RAG chunks. V path when flag off.
           const notebookText = microLedger || facing.lastCompaction?.summary || "";
-          const harvested = harvestAddresses(notebookText, userPrompt, lastAssistantText);
-          const catalogHints: string[] = [];
-          if (harvested.length) catalogHints.push(`${harvested.length} address marker(s) in notebook`);
-          const summary = buildBootstrapPack({
+          const catalogHints = buildNotebookCatalogHints({
+            notebook: notebookText,
+            botId: bot.id,
+            threadId,
+          });
+          let summary = buildBootstrapPack({
             notebook: notebookText,
             budgetChars: bootstrapPackBudgetChars(ceiling.tokens),
             userText: userPrompt,
             lastAssistantText,
             catalogHints,
           });
+          const pins = latestBootstrapSections(notebookText);
+          const retrieveQuery = [
+            userPrompt,
+            pins.open ?? "",
+            pins.addresses ?? "",
+            pins.goal ?? "",
+            lastAssistantText,
+          ]
+            .filter((s) => s.trim())
+            .join("\n");
+          const archiveText = readLatestNotebookArchive(bot.id, threadId);
+          const hits = keywordRetrieve({
+            query: retrieveQuery,
+            sources: [
+              { id: "notebook", text: notebookText },
+              ...(archiveText ? [{ id: "archive-latest", text: archiveText }] : []),
+            ],
+            topK: 3,
+          });
+          summary = attachRetrievedChunks(summary, hits);
           result = { summary, turnText: injectStateVector(summary, userPrompt) };
         } else {
           result = await compactSession({
@@ -5556,9 +5585,9 @@ async function runGroupMemberTurn(
   const preparedApprovalMode = approvalModeForTurn(bot);
   const preparedSelection = { ...bot.modelSelection };
   const preparedComposio = bot.composio;
-  const instance = registry.get(bot.modelSelection.instanceId);
+  const instance = registry.get(preparedSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
-  if (providerInstancesChanging.has(bot.modelSelection.instanceId)) {
+  if (providerInstancesChanging.has(preparedSelection.instanceId)) {
     onDispatchError?.(`${bot.name}'s provider account is being updated — try again shortly`);
     return true;
   }
@@ -5682,6 +5711,7 @@ async function runGroupMemberTurn(
     ? readyGroup.threadId === threadId
     : Boolean(readyGroup && store.groupTaskByThread(readyGroup.id, threadId));
   if (!readyGroup || !stillOwnsThread || !readyGroup.memberIds.includes(readyBot.id)) return false;
+  const readySpeaker = store.projectBotForTask(readyBot.id, readyBot.threadId) ?? readyBot;
   const setupChanged =
     registry.get(preparedSelection.instanceId) !== instance ||
     approvalModeForTurn(readyBot) !== preparedApprovalMode ||
@@ -6003,7 +6033,7 @@ async function runGroupMemberTurn(
         system: roomSystem,
         cwd,
         integrations,
-        ...memberTurnSelection(readyBot.modelSelection),
+        ...memberTurnSelection(readySpeaker.modelSelection),
       }), () => abandoned || Boolean(isCancelled?.()), async () => {
         // Stop may have landed while the adapter was authenticating, before
         // it had an active process for the first interrupt to reach. Now that
