@@ -43,12 +43,19 @@ When flag is **off**: previous fat-V inject path unchanged.
 - After extractive ship: log `micro vectors: inject + generateText both failed — using quote-only extractive turn page`.
 - `notebook.md` now has pages with Goal / This turn / Open / Addresses (canary + `server/bootstrap-rag.ts` present).
 
-### What did **not** prove yet
+### Proved on compact #2 (after extractive notebook)
 
-- **Thin bootstrap-only** path (no forced full-V) with a populated notebook + Catalog/Retrieved.
-- Compact #2 / #3 continuity under bootstrap hybrid.
+- Log: `[keep-chatting] bootstrap path bootstrap score=1 reasons=ok` (not full-V).
+- Live notebook had Goal / Open / Addresses / Catalog / Retrieved before/around fold.
+- Extractive pages unblocked pin coverage when Unsloth harvest failed.
+
+### Still open
+
+- Post-compact #2 canary + address **recall** quality (in flight).
+- Compact #3 continuity under bootstrap hybrid.
 - **Noodle / Claude** compact pass.
 - Clean Settings UI strings for Bootstrap hybrid in the **installed** `app.asar` (server + disk config work; UI may still lack the toggle label until a full package).
+- Real LLM harvest instead of extractive-only pages.
 
 ### Recurring pain
 
@@ -59,8 +66,7 @@ When flag is **off**: previous fat-V inject path unchanged.
 
 Priority order while continuing dogfood:
 
-1. **Prove thin path on Gemma**  
-   Pad thread to 32k hard cap with notebook pages present → compact → expect higher confidence, Catalog/Retrieved, and **not** only `V-fallback full-v score=0.25`. Confirm canary + address survive without relying solely on fat Fallback V.
+1. ~~**Prove thin path on Gemma**~~ **DONE** (compact #2: `bootstrap score=1`). Confirm post-compact canary + address recall; then compact #3.
 
 2. **Side-LLM harvest (Unsloth)**  
    Root-cause empty `content` on micro-vector / notebook generateText (auth, thinking tokens, model quirks). Extractive is a safety net, not the quality bar for Open / Landmines / dense This turn.
