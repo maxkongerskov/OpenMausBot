@@ -411,8 +411,10 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
-    if (turnRunning) steered.push(promptText(prompt));
-    else {
+    if (turnRunning) {
+      steered.push(promptText(prompt));
+      if (process.env.FAKE_CLAUDE_STEER_RECEIVED) writeFileSync(process.env.FAKE_CLAUDE_STEER_RECEIVED, "received");
+    } else {
       playTurn(prompt);
       armSteerGate();
     }

@@ -1524,11 +1524,20 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   });
 
   it("a message sent mid-turn is steered into the running turn", async () => {
-    await create("slow");
+    const finishGate = join(scratch, "steer-finish.gate");
+    const received = join(scratch, "steer-received");
+    await create("slow", {
+      FAKE_CLAUDE_SLOW_FINISH_GATE: finishGate,
+      FAKE_CLAUDE_STEER_RECEIVED: received,
+    });
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "first" });
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
     expect(instance.adapter.capabilities.queueing).toBe(true);
     await expect(instance.adapter.steer!("t-steer", "and also this")).resolves.toBe(true);
+    // Hold the turn until the child has consumed the steer; an 800ms timer
+    // can finish before a loaded CI runner resumes this test's continuation.
+    await expect.poll(() => existsSync(received)).toBe(true);
+    writeFileSync(finishGate, "finish");
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
     const reply = recorder.events.find(
