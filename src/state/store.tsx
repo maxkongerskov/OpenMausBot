@@ -1533,13 +1533,10 @@ export function reducer(state: AppState, action: Action): AppState {
         settingsOpen: open,
         botSettingsSection: action.section ?? state.botSettingsSection,
         // Mascot / bare open omits `section` → accordion stays fully collapsed.
-        // Deep links that pass `section` expand that one row on mount.
+        // Deep links expand that row even when the panel is already open.
         botSettingsExpandAccordion: open ? action.section !== undefined : false,
-        // A centered modal sits over the side panels, so opening it leaves
-        // the computer panel and inspector as they were — the computer
-        // panel's own gear opens this dialog, and closing the panel under it
-        // would destroy what the user was just looking at. The app settings
-        // modal is the one thing that cannot share the screen with it.
+        // Preserve the computer and inspector surfaces; their own controls
+        // can open bot settings. App settings are mutually exclusive.
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }

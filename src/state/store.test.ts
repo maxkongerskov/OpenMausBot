@@ -1620,6 +1620,16 @@ describe("bot settings section", () => {
     expect(next.appSettingsOpen).toBe(false);
   });
 
+  it("reopens the same section after a collapse without remounting settings", () => {
+    const opened = reducer(initialState, { type: "toggleSettings", open: true, section: "usage" });
+    const collapsed = reducer(opened, { type: "toggleSettings", open: true });
+    expect(collapsed.settingsOpen).toBe(true);
+    expect(collapsed.botSettingsExpandAccordion).toBe(false);
+    const reopened = reducer(collapsed, { type: "toggleSettings", open: true, section: "usage" });
+    expect(reopened.botSettingsSection).toBe("usage");
+    expect(reopened.botSettingsExpandAccordion).toBe(true);
+  });
+
   it("toggleSettings without a section keeps it", () => {
     const state = reducer(initialState, {
       type: "toggleSettings",

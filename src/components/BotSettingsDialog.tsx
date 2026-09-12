@@ -36,11 +36,9 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   const derived = useBotSettingsDerived(bot);
   const dialogRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
-  // Clicking the open row again collapses it; picking another row expands that one.
-  // Accordion starts fully collapsed on every open (component remounts with
-  // settingsOpen). Only an explicit `section` on the open action expands one
-  // row (usage chip, identity menu, etc.).
-  const [collapsed, setCollapsed] = useState(!state.botSettingsExpandAccordion);
+  // Keep expansion in the store too: header deep links can arrive while
+  // this panel is already mounted, including after collapsing the same row.
+  const collapsed = !state.botSettingsExpandAccordion;
   const q = query.trim().toLowerCase();
   const visibleSections = BOT_SECTIONS.filter((entry) => sectionMatches(entry, q));
 
@@ -180,14 +178,10 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   };
 
   useEffect(() => {
-    const visible = BOT_SECTIONS.filter((entry) => sectionMatches(entry, q));
-    if (visible.some((entry) => entry.id === section)) return;
-    const first = visible[0];
-    if (first) {
-      setCollapsed(false);
-      dispatch({ type: "toggleSettings", open: true, section: first.id });
-    }
-  }, [dispatch, q, section]);
+    // Search narrows the collapsed row list. Choosing a row (or following
+    // an external deep link) clears that filter so it cannot hide the body.
+    if (!collapsed) setQuery("");
+  }, [collapsed, section]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -236,7 +230,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
             refreshError={overview !== null && overviewError}
             prompt={prompt}
             promptError={promptError}
-            onOpen={(target) => { setCollapsed(false); dispatch({ type: "toggleSettings", open: true, section: target }); }}
+            onOpen={(target) => dispatch({ type: "toggleSettings", open: true, section: target })}
             onSetup={derived.canCoordinate && !bot.busy ? () => {
               dispatch({ type: "toggleSettings", open: false });
               dispatch({ type: "send", botId: bot.id, text: "/setup", threadId: bot.threadId });
@@ -261,7 +255,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
         // while the user consults another section. It fetches when it
         // becomes the active section. Always mounted; visibility toggled
         // via hidden on the accordion body wrapper.
-        return <MemorySection bot={bot} active={section === "memory"} />;
+        return <MemorySection bot={bot} active={!collapsed && section === "memory"} />;
       case "routines":
         return <RoutinesSection bot={bot} routines={derived.botRoutines} runs={state.routineRuns} />;
       case "access":
@@ -323,7 +317,10 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
           <Search size={14} className="shrink-0 text-ink-secondary" />
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              dispatch({ type: "toggleSettings", open: true });
+            }}
             onKeyDown={(e) => {
               if (e.key !== "Escape") return;
               e.stopPropagation();
@@ -360,10 +357,9 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
                   type="button"
                   onClick={() => {
                     if (section === id && !collapsed) {
-                      setCollapsed(true);
+                      dispatch({ type: "toggleSettings", open: true });
                       return;
                     }
-                    setCollapsed(false);
                     dispatch({ type: "toggleSettings", open: true, section: id });
                   }}
                   aria-expanded={open}
