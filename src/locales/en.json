@@ -288,6 +288,7 @@
   "sidebar.archived.count": "{count} archived",
   "sidebar.archived.botFallback": "Bot",
   "sidebar.archived.restore": "Restore",
+  "sidebar.archived.deleteAria": "Delete {name}",
   "sidebar.archived.restored": "{name} restored",
   "sidebar.archived.restoredOne": "1 bot restored",
   "sidebar.archived.restoredMany": "{count} bots restored",
