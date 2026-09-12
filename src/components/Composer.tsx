@@ -89,7 +89,7 @@ export function Composer({
   onClearReply,
   onConsumeReply,
   onRestoreReply,
-  locked = false,
+  locked: setupLocked = false,
 }: {
   bot?: Bot;
   group?: Group;
@@ -103,6 +103,7 @@ export function Composer({
   locked?: boolean;
 }) {
   const bot = profile ? currentTaskBot(profile) : undefined;
+  const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const remoteClient = window.ogb?.remoteClient?.active === true;
@@ -951,8 +952,9 @@ export function Composer({
             if (e.key === "Escape" && recording) setRecording(false);
           }}
           disabled={Boolean(approval) || locked || attachmentPending}
+          aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={
-            locked
+            setupLocked
               ? t("composer.placeholder.locked")
               : approval
               ? t("composer.placeholder.approval")
