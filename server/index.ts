@@ -350,7 +350,7 @@ import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./
 import { takeImportName } from "../shared/import-name.ts";
 import { readThreadEvents } from "./thread-events.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
-import { memberTurnSelection } from "./member-turn.ts";
+import { memberTurnSelection, roomSpeakerSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
@@ -6624,7 +6624,9 @@ async function runGroupMemberTurn(
   revokeInternalCapabilitiesForThread(threadId);
   spoken.add(botId);
   const preparedApprovalMode = approvalModeForTurn(bot, Boolean(orchestration?.roomHandoffId));
-  const preparedSelection = { ...bot.modelSelection };
+  // Rooms follow the bot default ("This bot" / groups). A thread-only 1:1
+  // override stays on that private thread (#1130).
+  const preparedSelection = roomSpeakerSelection(bot);
   const preparedComposio = bot.composio;
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
