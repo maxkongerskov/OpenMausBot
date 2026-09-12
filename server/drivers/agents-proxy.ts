@@ -375,7 +375,7 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your OpenMausBot section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
+      "List the other bots (agents) in your OpenMausBot section, with their model and what each is doing right now (available, working, waiting on the user, not responding, or unavailable). Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -886,7 +886,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
-      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""}]`;
+      // statusText is the server's own wording for what the teammate is
+      // doing; an older server only sends busy, so fall back to that.
+      const state = typeof b.statusText === "string"
+        ? (b.status === "available" ? "" : b.statusText)
+        : (b.busy ? "busy" : "");
+      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${state ? `, ${state}` : ""}]`;
     });
     return {
       text: `Other bots in your section:\n${lines.join("\n")}\n\nAssign work with delegate_bot. Use ask_bot only for a short answer you need inline.`,
@@ -1015,7 +1020,16 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const who = typeof r.toBotName === "string" && r.toBotName ? `@${r.toBotName}` : "the peer";
     if (r.status === "done") return { text: `${who} finished task ${taskId}:\n${String(r.result || "(no reply text)")}` };
     if (r.status === "queued") {
-      return { text: `Task ${taskId} is still queued — ${who} hasn't picked it up yet${waitMs ? ` after ${timeout}s` : ""}. Keep working and check again later.` };
+      const why = r.targetStatus === "waiting-on-user"
+        ? ` ${who} is waiting on the user, so it goes through after they answer.`
+        : r.targetStatus === "working" ? ` ${who} is busy with other work.` : "";
+      const expiresInMs = Number(r.expiresInMs);
+      const expiry = !Number.isFinite(expiresInMs)
+        ? ""
+        : expiresInMs <= 0
+          ? " It is past its 24-hour limit and will expire the next time it cannot be delivered."
+          : ` It expires if not picked up within ${Math.ceil(expiresInMs / 3_600_000)} hour${Math.ceil(expiresInMs / 3_600_000) === 1 ? "" : "s"}.`;
+      return { text: `Task ${taskId} is still queued — ${who} hasn't picked it up yet${waitMs ? ` after ${timeout}s` : ""}.${why}${expiry} Keep working and check again later.` };
     }
     if (r.status === "running") {
       const elapsedMs = Number.isFinite(r.elapsedMs) ? Number(r.elapsedMs) : 0;
