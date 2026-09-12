@@ -126,6 +126,8 @@ describe("bot setup and tools in the real renderer", () => {
       await ui("click", "--ref", `@${cost[0][0]}`);
       await expect.poll(usageExpanded).toBe("true");
       expect(await snapshot()).toContain("All bots");
+      // Allow subpixel rounding at the bottom edge of the scroll viewport.
+      await expect.poll(() => evaluate("(() => { const row = document.querySelector('[data-bot-settings-section=usage]'); const rect = row?.getBoundingClientRect(); return rect ? Math.max(-rect.top, rect.bottom - innerHeight) : 9999; })()")).toBeLessThanOrEqual(1);
     };
     await openHeaderUsage();
     await click("Usage");

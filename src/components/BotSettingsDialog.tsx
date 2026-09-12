@@ -180,8 +180,11 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   useEffect(() => {
     // Search narrows the collapsed row list. Choosing a row (or following
     // an external deep link) clears that filter so it cannot hide the body.
-    if (!collapsed) setQuery("");
-  }, [collapsed, section]);
+    if (collapsed) return;
+    if (q) { setQuery(""); return; }
+    dialogRef.current?.querySelector(`[data-bot-settings-section="${section}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [collapsed, section, q]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -350,6 +353,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
             return (
               <div
                 key={id}
+                data-bot-settings-section={id}
                 className="border-b border-hairline/30"
                 hidden={!matched}
               >
