@@ -30,6 +30,46 @@ export function botLongPressShouldCancel(
   return dx * dx + dy * dy > threshold * threshold;
 }
 
+/** Before lift, the list can still pan. After lift, consume touchmove so
+ * Chromium does not claim the gesture as a scroll and fire pointercancel. */
+export function botLiftNeedsTouchMoveGuard(lifted: boolean): boolean {
+  return lifted;
+}
+
+/** Non-passive window listener used only after the row has lifted. */
+export function bindLiftedTouchMoveGuard(target: EventTarget): () => void {
+  const onTouchMove = (event: Event) => {
+    event.preventDefault();
+  };
+  target.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+  return () => {
+    target.removeEventListener("touchmove", onTouchMove, { capture: true });
+  };
+}
+
+/** A drop with no other row (empty space / cancelled pointer) does not persist. */
+export function botDropCommits(over: { id: string } | null | undefined): boolean {
+  return Boolean(over);
+}
+
+export type BotClickLatch = { suppressed: boolean };
+
+/** Next pointerdown on the row always starts a fresh click. */
+export function clearBotClickLatch(latch: BotClickLatch): void {
+  latch.suppressed = false;
+}
+
+export function armBotClickLatch(latch: BotClickLatch, wasLifted: boolean): void {
+  if (wasLifted) latch.suppressed = true;
+}
+
+/** True when this click is the leftover from a finished drag and should not select. */
+export function consumeBotClickLatch(latch: BotClickLatch): boolean {
+  if (!latch.suppressed) return false;
+  latch.suppressed = false;
+  return true;
+}
+
 export function botDropPlace(clientY: number, top: number, height: number): SectionDropPlace {
   return clientY < top + height / 2 ? "before" : "after";
 }

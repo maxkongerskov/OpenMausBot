@@ -89,10 +89,17 @@ import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { botListItemPointerIntent } from "@/lib/sidebar-selection";
 import {
   BOT_LONG_PRESS_MS,
+  armBotClickLatch,
+  bindLiftedTouchMoveGuard,
+  botDropCommits,
   botFloatPosition,
+  botLiftNeedsTouchMoveGuard,
   botLongPressShouldCancel,
   botDropTarget,
+  clearBotClickLatch,
+  consumeBotClickLatch,
   readBotRowBoxes,
+  type BotClickLatch,
   type BotLift,
 } from "@/lib/sidebar-bot-drag";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
@@ -1033,7 +1040,7 @@ export function BotListItem({
   const [renaming, setRenaming] = useState(false);
 
   const [creatingProject, setCreatingProject] = useState(false);
-  const suppressClickRef = useRef(false);
+  const suppressClickRef = useRef<BotClickLatch>({ suppressed: false });
   const rowRef = useRef<HTMLDivElement>(null);
   const pressRef = useRef<{
     timer: number | null;
@@ -1210,8 +1217,7 @@ export function BotListItem({
   const onSelect = (event: React.MouseEvent) => {
 
     if (renaming) return;
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
+    if (consumeBotClickLatch(suppressClickRef.current)) {
       event.preventDefault();
       return;
     }
@@ -1226,7 +1232,7 @@ export function BotListItem({
     const press = pressRef.current;
     const wasLifted = Boolean(press?.lifted) || Boolean(reorder?.dragging);
     if (wasLifted) {
-      suppressClickRef.current = true;
+      armBotClickLatch(suppressClickRef.current, true);
       if (commit) reorder?.onRelease();
       else reorder?.onCancel();
     }
@@ -1238,6 +1244,7 @@ export function BotListItem({
   // Click still opens the bot. A long press detaches the row so it hovers
   // with the pointer and drops into a new up/down slot on release.
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    clearBotClickLatch(suppressClickRef.current);
     if (!reorder?.enabled || renaming || floating || event.button !== 0) return;
     if (pointerOnChrome(event.target)) return;
     // A stuck lift from a missed pointerup must not block the next long-press.
@@ -1838,7 +1845,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const position = subset.indexOf(movedId);
     const moved = state.bots.find((candidate) => candidate.id === movedId);
     if (position >= 0 && moved) {
-      setReorderAnnouncement(`${moved.name} moved to position ${position + 1} of ${subset.length}`);
+      setReorderAnnouncement(
+        t("sidebar.bot.moved", {
+          name: moved.name,
+          position: position + 1,
+          count: subset.length,
+        }),
+      );
     }
   };
   const resetBotDrag = () => {
@@ -1889,7 +1902,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const releaseLiftedBot = () => {
     const lift = draggingBotRef.current;
     const over = botDropRef.current;
-    if (lift && over) {
+    if (lift && botDropCommits(over) && over) {
       const currentIds = applyItemOrder(botsForSection(lift.sectionId), botOrder).map((candidate) => candidate.id);
       const nextSubset = placeSection(currentIds, lift.id, over.id, over.place);
       if (!sameSectionOrder(nextSubset, currentIds)) persistBotSubset(nextSubset, lift.id);
@@ -1925,7 +1938,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     window.addEventListener("pointercancel", onWinCancel);
     window.addEventListener("blur", onWinCancel);
     window.addEventListener("keydown", onKey);
+    // Chromium locks touch-action at gesture start, so `touch-none` applied
+    // after the 450ms lift is ignored. Consume touchmove instead; an early
+    // finger move already cancelled the pending lift, so list scrolling survives.
+    const unbindTouchMove = botLiftNeedsTouchMoveGuard(true)
+      ? bindLiftedTouchMoveGuard(window)
+      : () => {};
     botDragWindowCleanupRef.current = () => {
+      unbindTouchMove();
       window.removeEventListener("pointermove", onWinMove);
       window.removeEventListener("pointerup", onWinUp);
       window.removeEventListener("pointercancel", onWinCancel);
