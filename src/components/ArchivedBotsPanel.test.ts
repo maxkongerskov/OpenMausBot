@@ -48,4 +48,20 @@ describe("ArchivedBotRow", () => {
     expect(copy.confirmLabel).toBe("Delete all");
     expect(copy.tone).toBe("danger");
   });
+
+  it("locks restore and delete while a deletion is in flight", () => {
+    const markup = renderToStaticMarkup(createElement(ArchivedBotRow, {
+      bot: waffle(),
+      restoring: false,
+      deleting: true,
+      disabled: true,
+      onRestore: vi.fn(),
+      onDelete: vi.fn(),
+    }));
+
+    expect(markup.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(markup).toContain("animate-spin");
+    expect(markup).toContain(">Restore</button>");
+    expect(markup).toContain(">Delete</button>");
+  });
 });
