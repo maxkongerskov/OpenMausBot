@@ -53,6 +53,7 @@ import {
   composerCanSteerQueuedMessages,
 } from "./ComposerQueuedMessages";
 import { skillAuthoringEnabled } from "@/lib/feature-flags";
+import { applyTrustedFullAccess } from "@/lib/trusted-full-access";
 import { mentionChoicesForQuery } from "@/lib/mentions";
 import {
   composerSlashTrigger,
@@ -1049,16 +1050,22 @@ export function Composer({
       <div className="pointer-events-auto">
       <FullAccessWarning
         open={approvalWarning?.mode === "full"}
-        scope="thread"
+        scope={approvalModeFor(profile ?? {}) === "full" ? "thread" : "bot"}
         onCancel={() => setApprovalWarning(null)}
         onConfirm={() => {
           const target = approvalWarning;
           setApprovalWarning(null);
           if (target?.mode !== "full" || !window.ogb?.approvals || applyingThreadAccess) return;
+          const setMode = window.ogb.approvals.setMode.bind(window.ogb.approvals);
+          const botDefaultIsFull = approvalModeFor(profile ?? {}) === "full";
           setApplyingThreadAccess(true);
           // The private reply predates commit. SSE supplies the final task;
           // applying that early reply here could overwrite its new mode.
-          void window.ogb.approvals.setMode(target.botId, "full", { threadId: target.threadId })
+          void applyTrustedFullAccess(setMode, {
+            botId: target.botId,
+            threadId: target.threadId,
+            botDefaultIsFull,
+          })
             .catch((error) => dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }))
             .finally(() => setApplyingThreadAccess(false));
         }}
