@@ -1292,7 +1292,8 @@ function ArchivedBotsPanel({
   const [restoringAll, setRestoringAll] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Bot | "all" | null>(null);
   const [error, setError] = useState("");
-  const locked = restoringAll || Boolean(busyId) || Boolean(pendingDelete);
+  const deleting = bots.some((bot) => Boolean(state.deletingBots[bot.id]));
+  const locked = restoringAll || Boolean(busyId) || deleting || Boolean(pendingDelete);
 
   useEffect(() => {
     if (bots.length === 0) onClose();
