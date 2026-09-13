@@ -824,6 +824,15 @@ export function botConfirmCopy(kind: BotConfirmKind, name: string) {
       };
 }
 
+export function archivedDeleteAllCopy() {
+  return {
+    title: t("sidebar.archived.deleteAllTitle"),
+    body: t("sidebar.archived.deleteAllBody"),
+    confirmLabel: t("sidebar.archived.deleteAll"),
+    tone: "danger" as const,
+  };
+}
+
 export function BotDeleteMenuItem({ deleting, onClick }: { deleting: boolean; onClick: () => void }) {
   return (
     <button
@@ -1281,7 +1290,7 @@ function ArchivedBotsPanel({
   const dialogRef = useRef<HTMLDivElement>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [restoringAll, setRestoringAll] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<Bot | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Bot | "all" | null>(null);
   const [error, setError] = useState("");
   const locked = restoringAll || Boolean(busyId) || Boolean(pendingDelete);
 
@@ -1374,6 +1383,17 @@ function ArchivedBotsPanel({
                 {t("sidebar.archived.restoreAll")}
               </button>
             )}
+            {bots.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setPendingDelete("all")}
+                disabled={locked}
+                className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12.5px] text-danger hover:bg-danger/10 disabled:opacity-40"
+              >
+                <Trash2 size={13} />
+                {t("sidebar.archived.deleteAll")}
+              </button>
+            )}
             <button
               onClick={onClose}
               disabled={locked}
@@ -1404,14 +1424,20 @@ function ArchivedBotsPanel({
       </div>
       <ConfirmDialog
         open={pendingDelete !== null}
-        {...botConfirmCopy("delete", pendingDelete?.name ?? "")}
+        {...(pendingDelete === "all"
+          ? archivedDeleteAllCopy()
+          : botConfirmCopy("delete", pendingDelete?.name ?? ""))}
         icon={<Trash2 size={18} />}
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
           if (!pendingDelete) return;
-          const botId = pendingDelete.id;
+          const target = pendingDelete;
           setPendingDelete(null);
-          dispatch({ type: "deleteBot", botId });
+          if (target === "all") {
+            for (const bot of bots) dispatch({ type: "deleteBot", botId: bot.id });
+            return;
+          }
+          dispatch({ type: "deleteBot", botId: target.id });
         }}
       />
     </div>,
