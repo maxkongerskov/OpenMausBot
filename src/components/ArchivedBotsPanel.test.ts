@@ -8,7 +8,7 @@ vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({}),
 }));
 
-import { ArchivedBotRow } from "./Sidebar";
+import { ArchivedBotRow, archivedDeleteAllCopy } from "./Sidebar";
 
 const waffle = (): Bot => ({
   id: "waffle",
@@ -39,5 +39,13 @@ describe("ArchivedBotRow", () => {
     expect(markup).toContain('aria-label="Delete Waffle"');
     expect(markup).toContain(">Delete</button>");
     expect(markup).toContain("text-danger");
+  });
+
+  it("spells out that Delete all permanently removes every archived bot", () => {
+    const copy = archivedDeleteAllCopy();
+    expect(copy.title).toBe("Delete all archived bots?");
+    expect(copy.body).toMatch(/permanently/i);
+    expect(copy.confirmLabel).toBe("Delete all");
+    expect(copy.tone).toBe("danger");
   });
 });
