@@ -57,6 +57,16 @@ describe("thread control placement", () => {
     delete window.ogb;
   });
 
+  it("offers Full access from the composer chip when the packaged desktop is present", () => {
+    window.ogb = { approvals: { setMode: vi.fn() } } as unknown as NonNullable<Window["ogb"]>;
+    fixture.dispatch.mockClear();
+    renderToStaticMarkup(createElement(ChatView, { bot: { ...bot, busy: false } }));
+    expect(fixture.approval).toMatchObject({ trustedModesAvailable: true });
+    fixture.approval!.onSelect("full");
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    delete window.ogb;
+  });
+
   it("explains provider safety errors without offering an ineffective Retry", () => {
     const markup = renderToStaticMarkup(createElement(ErrorRow, { message: "Blocked by our safety systems", onRetry: () => {} }));
     expect(markup).toContain("Full access controls tool approvals, not provider safety checks");

@@ -382,7 +382,8 @@ export function Composer({
   const approvalEngine = modeBot
     ? state.instances.find((instance) => instance.instanceId === modeBot.modelSelection.instanceId)
     : undefined;
-  const canApplyBotFullAccess = Boolean(modeBot && profile && !remoteClient && window.ogb?.approvals && capabilities.host.packaged &&
+  const trustedModesAvailable = Boolean(window.ogb?.approvals && capabilities.host.packaged && !remoteClient);
+  const canApplyBotFullAccess = Boolean(modeBot && profile && trustedModesAvailable &&
     approvalModeFor(profile) === "full" && approvalModeFor(modeBot) !== "full" &&
     approvalEngine?.driverKind === state.instances.find((instance) => instance.instanceId === profile.modelSelection.instanceId)?.driverKind);
   const uploadImage = useCallback(async (file: File): Promise<Attachment | null> => {
@@ -427,7 +428,11 @@ export function Composer({
   };
   const setApprovalMode = (mode: ApprovalMode) => {
     if (!modeBot || modeBot.busy || mode === approvalModeFor(modeBot)) return;
-    if (mode === "full" || mode === "custom") return;
+    if (mode === "full") {
+      if (!trustedModesAvailable) return;
+      setApprovalWarning({ mode: "full", botId: modeBot.id, threadId: modeBot.threadId });
+      return;
+    }
     // Safe Auto still needs its dedicated warning when it can drive the host.
     if (mode === "auto" && modeBot.computer === "local") {
       setApprovalWarning({ mode: "auto", botId: modeBot.id, threadId: modeBot.threadId });
@@ -876,8 +881,8 @@ export function Composer({
                   driverKind={approvalEngine.driverKind}
                   onSelect={setApprovalMode}
                   disabled={Boolean(modeBot.busy)}
-                  trustedModesAvailable={false}
-                  trustedModesNotice={t("approvalMode.threadTrustedNotice")}
+                  trustedModesAvailable={trustedModesAvailable}
+                  trustedModesNotice={trustedModesAvailable ? undefined : t("approvalMode.threadTrustedNotice")}
                 />
               )}
             </div>
