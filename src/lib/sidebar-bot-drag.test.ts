@@ -9,6 +9,7 @@ import {
   botFloatPosition,
   botLiftNeedsTouchMoveGuard,
   botLongPressShouldCancel,
+  botPointerMatches,
   clearBotClickLatch,
   consumeBotClickLatch,
 } from "./sidebar-bot-drag";
@@ -79,6 +80,11 @@ describe("sidebar bot long-press drag", () => {
     armBotClickLatch(latch, true);
     clearBotClickLatch(latch);
     expect(consumeBotClickLatch(latch)).toBe(false);
+  });
+
+  it("ignores pointer events from a second finger during a lift", () => {
+    expect(botPointerMatches(7, 7)).toBe(true);
+    expect(botPointerMatches(7, 8)).toBe(false);
   });
 
   it("cancels a pending lift when the finger moves, which is what keeps scrolling", () => {

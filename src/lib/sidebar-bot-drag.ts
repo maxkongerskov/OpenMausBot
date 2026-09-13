@@ -16,7 +16,12 @@ export type BotLift = {
   grabOffsetY: number;
   x: number;
   y: number;
+  pointerId: number;
 };
+
+export function botPointerMatches(sessionId: number, eventId: number): boolean {
+  return sessionId === eventId;
+}
 
 export function botLongPressShouldCancel(
   originX: number,

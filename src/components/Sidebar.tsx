@@ -92,6 +92,7 @@ import {
   armBotClickLatch,
   bindLiftedTouchMoveGuard,
   botDropCommits,
+  botPointerMatches,
   botFloatPosition,
   botLiftNeedsTouchMoveGuard,
   botLongPressShouldCancel,
@@ -1262,7 +1263,8 @@ export function BotListItem({
       window.removeEventListener("pointerup", onEarlyUp);
       window.removeEventListener("pointercancel", onEarlyUp);
     };
-    const onEarlyUp = () => {
+    const onEarlyUp = (event: PointerEvent) => {
+      if (!botPointerMatches(pointerId, event.pointerId)) return;
       if (pressRef.current && !pressRef.current.lifted) clearPress();
       else disposeEarly();
     };
@@ -1286,6 +1288,7 @@ export function BotListItem({
           grabOffsetY,
           x: press.lastX,
           y: press.lastY,
+          pointerId,
         });
       }, BOT_LONG_PRESS_MS),
       x: startX,
@@ -1299,7 +1302,7 @@ export function BotListItem({
   };
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const press = pressRef.current;
-    if (!press || !reorder) return;
+    if (!press || !reorder || !botPointerMatches(press.pointerId, event.pointerId)) return;
     if (!press.lifted) {
       press.lastX = event.clientX;
       press.lastY = event.clientY;
@@ -1918,16 +1921,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     setBotDrop(null);
     document.body.style.cursor = "grabbing";
     document.body.style.userSelect = "none";
+    const pointerId = lift.pointerId;
     const onWinMove = (event: PointerEvent) => {
-      if (!draggingBotRef.current) return;
+      if (!draggingBotRef.current || !botPointerMatches(pointerId, event.pointerId)) return;
       moveLiftedBot(event.clientX, event.clientY);
     };
-    const onWinUp = () => {
-      if (!draggingBotRef.current) return;
+    const onWinUp = (event: PointerEvent) => {
+      if (!draggingBotRef.current || !botPointerMatches(pointerId, event.pointerId)) return;
       releaseLiftedBot();
     };
-    const onWinCancel = () => {
-      if (!draggingBotRef.current) return;
+    const onWinCancel = (event: PointerEvent) => {
+      if (!draggingBotRef.current || !botPointerMatches(pointerId, event.pointerId)) return;
       resetBotDrag();
     };
     const onKey = (event: KeyboardEvent) => {
