@@ -72,18 +72,17 @@ export function PlaceChip({ bot, task, live, disabled = false, onPin }: {
         aria-expanded={open}
         aria-label={t("place.chipAria", { place: label })}
         disabled={disabled || off}
-        title={title}
+        title={off || disabled ? title : `${label} — ${title}`}
         data-testid="place-chip"
         onClick={() => setOpen((value) => !value)}
         className={cn(
-          "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
-          pinned ? "border-accent/35 bg-accent/10 text-accent" : "border-hairline/20 bg-transparent text-ink-secondary hover:bg-raised hover:text-ink",
+          "relative flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink",
+          pinned && "text-accent hover:text-accent",
           (disabled || off) && "cursor-not-allowed opacity-45 hover:bg-transparent",
         )}
       >
-        <PlaceIcon place={effective} size={14} className="shrink-0 opacity-80" aria-hidden="true" />
-        <span className="truncate">{label}</span>
-        {showLive && <span className="size-1.5 animate-pulse rounded-full bg-success" aria-label={t("place.live")} />}
+        <PlaceIcon place={effective} size={16} className="shrink-0 opacity-80" aria-hidden="true" />
+        {showLive && <span className="absolute right-1.5 top-1.5 size-1.5 animate-pulse rounded-full bg-success" aria-label={t("place.live")} />}
       </button>
       {open && (
         <div role="menu" aria-label={t("place.chipTitle")} className="absolute bottom-full left-0 z-40 mb-2 w-[300px] overflow-hidden rounded-2xl border border-hairline/40 bg-raised shadow-2xl">
