@@ -76,6 +76,11 @@ export function approvalModeSelectionRequiresLocalDesktop(
   return currentMode === "custom" && !trustedModesAvailable;
 }
 
+/** How much this bot may do on its own, shown beside the composer with the
+ * current mode as its icon. Opens a menu that lists every available mode with
+ * its label and description and returns the chosen mode to the caller. Compact
+ * (icon-only) by default; `wide` renders the labeled variant used on bot
+ * settings. */
 export function ApprovalModeSelector({
   approvalMode,
   autoApprove,
