@@ -216,10 +216,15 @@ if (process.platform === "linux") {
   app.setDesktopName("com.openmausbot.app.desktop");
 }
 
+// A preview build sets this so it can sit beside the installed app without
+// sharing that app's profile or stealing its single-instance lock.
+const throwawayUserData = process.env.OMB_THROWAWAY_USER_DATA;
+if (throwawayUserData) app.setPath("userData", throwawayUserData);
+
 // One instance per user: without this lock a second launch forks a second
 // harness server on a fallback port and splits data dirs in two. The loser
 // exits before any child or window exists; the winner surfaces itself.
-if (!app.requestSingleInstanceLock()) {
+if (!throwawayUserData && !app.requestSingleInstanceLock()) {
   console.log("[desktop] OpenMausBot is already running — focusing that window");
   process.exit(0);
 }

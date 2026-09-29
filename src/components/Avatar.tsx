@@ -78,6 +78,10 @@ const gradientFor = (color: MausColor): [string, string, string] => {
   return [mix(fill, "#ffffff", 0.55), fill, mix(fill, "#000000", 0.42)];
 };
 
+/** The chosen Botto body: a white sphere. The bot color stays off the body. */
+const BOTTO_GRADIENT: [string, string, string] = ["#ffffff", "#f4f5f8", "#e4e6ee"];
+const BOTTO_EYE = "#1a1a1a";
+
 export type MausAvatarHandle = CursorAvatarHandle;
 
 export type MausAvatarProps = {
@@ -135,7 +139,9 @@ function MausAvatarComponent(
   }: MausAvatarProps,
   ref: React.Ref<MausAvatarHandle>,
 ) {
-  const silhouette = MASCOT_BODIES[botMascotBody(bodyId)];
+  const requested = botMascotBody(bodyId);
+  const botto = requested === "cursor" || requested === "circle";
+  const silhouette = MASCOT_BODIES[botto ? "circle" : requested];
   const inner = useRef<CursorAvatarHandle>(null);
   useImperativeHandle(ref, () => ({
     blink: () => inner.current?.blink(),
@@ -182,14 +188,16 @@ function MausAvatarComponent(
         expression={expression}
         size={size}
         silhouette={silhouette}
-        gradient={gradientFor(color)}
+        gradient={botto ? BOTTO_GRADIENT : gradientFor(color)}
+        eyeColor={botto ? BOTTO_EYE : undefined}
+        eyeShape={botto ? "slit" : "rings"}
         title={label ?? null}
         lookAround={lookAround ?? (forward ? 0 : 1)}
         gaze={{ x: (gaze?.x ?? 0) + pointer.x, y: (gaze?.y ?? 0) + pointer.y }}
         turn={turn}
         spring={spring}
         eyeScale={eyeScale}
-        showMouth={showMouth}
+        showMouth={botto ? false : showMouth}
         mouthStroke={mouthStroke}
         paused={!animated}
       />

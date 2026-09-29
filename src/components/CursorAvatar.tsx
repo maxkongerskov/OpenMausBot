@@ -1010,6 +1010,63 @@ const noTimestamp = (): number | null => null
 const toPath = (ring: Ring) =>
   'M' + ring.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z'
 
+/**
+ * Filled upper half-circle for one eye. The flat edge sits on the eye line
+ * and the dome rises upward. `radius` overrides the ring's own half-width.
+ */
+export function halfCircleEye(ring: Ring, radius?: number) {
+  let minX = Infinity
+  let maxX = -Infinity
+  let x = 0
+  let y = 0
+  for (const p of ring) {
+    if (p[0] < minX) minX = p[0]
+    if (p[0] > maxX) maxX = p[0]
+    x += p[0]
+    y += p[1]
+  }
+  x /= ring.length
+  y /= ring.length
+  const r = radius ?? Math.max((maxX - minX) / 2, 12)
+  return `M${(x - r).toFixed(2)} ${y.toFixed(2)} A${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${(x + r).toFixed(2)} ${y.toFixed(2)} Z`
+}
+
+/** Half-length of one engine eye, in face space. */
+export function eyeHalfWidth(ring: Ring) {
+  let minX = Infinity
+  let maxX = -Infinity
+  for (const p of ring) {
+    if (p[0] < minX) minX = p[0]
+    if (p[0] > maxX) maxX = p[0]
+  }
+  return Math.max((maxX - minX) / 2, 12)
+}
+
+/**
+ * Extra face-space gap between the half-circle eyes. The engine parks them
+ * close enough that they read as one mark, so the pair steps outward.
+ */
+const SLIT_PAIR_GAP = 68
+
+/** Added to the engine half-width so each half-circle stays the size of the face. */
+const SLIT_EYE_RADIUS_PAD = 16
+
+/** The half-circles are drawn this much larger than that base size. */
+const SLIT_EYE_SCALE = 1.5
+
+/**
+ * Half-circle eyes sit on one horizontal line. Each eye keeps the engine's x,
+ * then steps outward by half of SLIT_PAIR_GAP. They are not staggered in y.
+ */
+export function slitEyePlacement(eyes: { x: number; y: number }[]) {
+  const midX = eyes.reduce((sum, eye) => sum + eye.x, 0) / eyes.length
+  const midY = eyes.reduce((sum, eye) => sum + eye.y, 0) / eyes.length
+  return eyes.map(eye => ({
+    x: eye.x + Math.sign(eye.x - midX) * (SLIT_PAIR_GAP / 2),
+    y: midY,
+  }))
+}
+
 const clone = (rings: Ring[]): Ring[] =>
   rings.map(r => r.map((p): [number, number] => [p[0], p[1]]))
 
@@ -1157,6 +1214,8 @@ export interface CursorAvatarProps {
   silhouette?: CursorSilhouette
   gradient?: [string, string, string]
   eyeColor?: string
+  /** `slit` draws each engine eye as a black horizontal line. Motion, blink and gaze stay. */
+  eyeShape?: "rings" | "slit"
   title?: string | null
   className?: string
   style?: React.CSSProperties
@@ -1191,6 +1250,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       silhouette = DEFAULT_SILHOUETTE,
       gradient = DEFAULT_GRADIENT,
       eyeColor = "#ffffff",
+      eyeShape = "rings",
       title,
       className,
       style,
@@ -1249,6 +1309,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         motionStrength,
         effects,
         glyphs,
+        eyeShape,
       },
     })
     engine.current.props = {
@@ -1263,6 +1324,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       motionStrength,
       effects,
       glyphs,
+      eyeShape,
     }
 
     const selectExpression = (index: number) => {
@@ -1354,26 +1416,46 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         const base = p.eyeScale ?? 1
         const blink = blinkScale(e, now)
 
-        rings.forEach((ring, index) => {
-          const el = index === 0 ? eye0.current : eye1.current
-          if (!el) return
+        const projected = rings.map(ring => {
           const c = ringCentre(ring)
           const baseLongitude = Math.asin(clamp((c[0] - SPHERE_C) / SPHERE_R, -1, 1))
           const longitude = baseLongitude + radians
           const depth = Math.cos(longitude)
           const perspective = Math.max(depth, 0.02) / Math.max(Math.cos(baseLongitude), 0.02)
-          el.setAttribute('d', toPath(ring))
+          return {
+            c,
+            depth,
+            perspective,
+            x: SPHERE_C + SPHERE_R * Math.sin(longitude),
+            y: c[1],
+          }
+        })
+        const slit = p.eyeShape === 'slit'
+        const placed = slit ? slitEyePlacement(projected) : projected
+        const sharedRadius = slit
+          ? (rings.reduce((sum, ring) => sum + eyeHalfWidth(ring), 0) / rings.length + SLIT_EYE_RADIUS_PAD) *
+            SLIT_EYE_SCALE
+          : 0
+
+        rings.forEach((ring, index) => {
+          const el = index === 0 ? eye0.current : eye1.current
+          if (!el) return
+          const eye = projected[index]
+          const slot = placed[index]
+          const x = slot.x + gx
+          const y = slot.y + gy
+          el.setAttribute('d', slit ? halfCircleEye(ring, sharedRadius) : toPath(ring))
           el.setAttribute(
             'transform',
-            `translate(${(SPHERE_C + SPHERE_R * Math.sin(longitude) + gx).toFixed(2)} ${(
-              c[1] + gy
-            ).toFixed(2)}) scale(${clamp(perspective * base, 0.02, 2.4).toFixed(4)} ${clamp(
-              blink * base,
+            `translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${clamp(
+              eye.perspective * base,
               0.02,
               2.4
-            ).toFixed(4)}) translate(${(-c[0]).toFixed(2)} ${(-c[1]).toFixed(2)})`
+            ).toFixed(4)} ${clamp(blink * base, 0.02, 2.4).toFixed(4)}) translate(${(-eye.c[0]).toFixed(
+              2
+            )} ${(-eye.c[1]).toFixed(2)})`
           )
-          el.style.opacity = depth > 0.02 ? '1' : '0'
+          el.style.opacity = eye.depth > 0.02 ? '1' : '0'
         })
 
         // Mouth: same sphere projection as the eyes, but blinking never touches it.
@@ -1442,7 +1524,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         // One draw per change of what the still face shows, then park.
         if (p.paused) {
           e.last = now
-          const still = `${p.state}|${p.expression ?? ''}|${paintRef.current}`
+          const still = `${p.state}|${p.expression ?? ''}|${p.eyeShape ?? ''}|${paintRef.current}`
           if (e.pausedPaint !== still) {
             e.pausedPaint = still
             draw(e, now, 0)

@@ -9,7 +9,9 @@ import {
   type BotAvatarProps,
   type MausAvatarProps,
 } from "./Avatar";
+import { halfCircleEye, slitEyePlacement } from "./CursorAvatar";
 import { MASCOT_BODIES } from "../../shared/mascot-bodies";
+import type { Ring } from "./cursor-face-data";
 
 const render = (props: Partial<MausAvatarProps>) =>
   renderToStaticMarkup(createElement(MausAvatar, { color: "green", animated: false, ...props }));
@@ -19,9 +21,35 @@ const renderBot = (bot: Partial<BotAvatarProps["bot"]>) =>
     createElement(BotAvatar, { bot: { color: "green", ...bot }, animated: false }),
   );
 
+describe("Botto half-circle eyes", () => {
+  const ring: Ring = [
+    [100, 80],
+    [140, 90],
+    [100, 120],
+    [60, 90],
+  ];
+
+  it("draws an upper half-circle on the engine eye", () => {
+    expect(halfCircleEye(ring, 20)).toBe("M80.00 95.00 A20.00 20.00 0 0 1 120.00 95.00 Z");
+  });
+
+  it("keeps the pair level and wider apart than the engine spacing", () => {
+    const placed = slitEyePlacement([
+      { x: 90, y: 100 },
+      { x: 140, y: 128 },
+    ]);
+    expect(placed[0].y).toBe(placed[1].y);
+    expect(placed[0].y).toBe(114);
+    expect(placed[1].x - placed[0].x).toBe(140 - 90 + 68);
+  });
+
+});
+
 describe("MausAvatar body", () => {
-  it("wears the cursor when no body is given", () => {
-    expect(render({})).toContain(MASCOT_BODIES.cursor.fit);
+  it("wears the Botto circle when no body is given", () => {
+    expect(render({})).toContain(MASCOT_BODIES.circle.fit);
+    expect(render({})).toContain("#ffffff");
+    expect(render({})).toContain('fill="#1a1a1a"');
   });
 
   it("wears the body it is given", () => {
@@ -29,13 +57,13 @@ describe("MausAvatar body", () => {
     expect(markup).toContain(MASCOT_BODIES.star.fit);
   });
 
-  it("falls back to the cursor for an unknown body", () => {
+  it("falls back to the Botto circle for an unknown body", () => {
     // SAFETY: "hexagram" is deliberately not a valid MascotBodyId — this
     // exercises the runtime schema fallback for a value that could arrive
     // from persisted/streamed data, which the type system would otherwise
-    // rule out at this call site.
+    // rule out at this call site. The cursor fallback is drawn as the sphere.
     expect(render({ bodyId: "hexagram" as MausAvatarProps["bodyId"] })).toContain(
-      MASCOT_BODIES.cursor.fit,
+      MASCOT_BODIES.circle.fit,
     );
   });
 
