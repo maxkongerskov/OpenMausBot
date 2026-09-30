@@ -3,12 +3,12 @@
 // exactly as before, without waiting on anything new. Any other page (a
 // browser, or a hosted workspace the desktop app opened with its reduced
 // bridge) asks its server who it is first. A hosted workspace's admin gets
-// the hosted beats and a hosted member a quiet note. A Cloud home opens on
-// its engine sign-in (CloudEngineSignIn) rather than this flow. A session
+// the hosted beats and a hosted member a quiet note. A server that reports
+// a Cloud home skips this flow. A session
 // that cannot save the workspace config is never shown a tour it could not
 // finish.
 import { useEffect, useState } from "react";
-import { emailGateDone } from "@/lib/analytics";
+import { emailGateDone } from "@/lib/email-gate";
 import { hostedMember, LOCAL_VIEWER, welcomeDue, welcomeViewer, type BeatId, type WelcomeViewer } from "@/lib/onboarding";
 import { api, useStore } from "@/state/store";
 import { SharedWorkspaceHint } from "./SharedWorkspaceHint";
@@ -80,17 +80,13 @@ export function WelcomeGate({ viewer }: { viewer: WelcomeViewer | null }) {
     });
   // Explicit desktop connection Settings need no local provider onboarding.
   // Organisation remains optional; closing Settings resumes the normal tour.
-  // OMB Cloud steps it aside too, but only when the Cloud page's "Open in the
-  // app" link opened it; a normal visit there keeps the tour as before.
-  if (state.appSettingsOpen && (["desktopWorkspaces", "organization"].includes(state.appSettingsSection) ||
-    (state.appSettingsSection === "cloudAccount" && state.appSettingsCloudLink > 0))) return null;
+  if (state.appSettingsOpen && ["desktopWorkspaces", "organization"].includes(state.appSettingsSection)) return null;
   if (!state.welcomeOpen && !due) return null;
   const bot = state.bots.find((b) => !b.hidden) ?? null;
   const replay = state.welcomeOpen && !due;
   return (
     <WelcomeFlow
       bot={bot}
-      replay={replay}
       hosted={viewer.hosted}
       initialBeat={resumeAt}
       onOpenOrganisation={() => {

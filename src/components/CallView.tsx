@@ -30,7 +30,6 @@ import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { BotAvatar } from "./Avatar";
 import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
-import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { callCapabilityHelp } from "@/lib/call-capability";
 
@@ -51,7 +50,6 @@ export function CallButton({ bot }: { bot: Bot }) {
       voices={[bot.voice]}
       setupBotId={bot.id}
       requireExplicitVoices={false}
-      onStart={() => track("call_started", { driver: bot.modelSelection?.instanceId })}
     />
   );
 }
@@ -62,7 +60,6 @@ export function CallTargetButton({
   voices,
   setupBotId,
   requireExplicitVoices,
-  onStart,
 }: {
   targetId: string;
   targetName: string;
@@ -71,7 +68,6 @@ export function CallTargetButton({
   setupBotId?: string;
   /** Rooms cannot rely on one workspace fallback for multiple speakers. */
   requireExplicitVoices: boolean;
-  onStart: () => void;
 }) {
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
@@ -145,7 +141,6 @@ export function CallTargetButton({
             setHelpOpen((open) => !open);
             return;
           }
-          onStart();
           startCall(targetId);
         }}
         aria-expanded={unavailable ? helpOpen : undefined}

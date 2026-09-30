@@ -2,7 +2,7 @@
 // would type for it.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { StoreProvider } from "@/state/store";
 
@@ -10,11 +10,6 @@ beforeAll(() => {
   (globalThis as { window?: unknown }).window ??= {};
   (globalThis as { document?: unknown }).document ??= { documentElement: { dataset: {} } };
 });
-
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  setAnalyticsEnabled: () => {},
-}));
 
 describe("Settings → Decision model", () => {
   it("is a sidebar item of its own, not a row under Connections", async () => {

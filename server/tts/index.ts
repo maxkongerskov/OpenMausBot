@@ -25,8 +25,7 @@ export class NoVoiceConfigured extends Error {
   }
 }
 
-/** The ElevenLabs credential in use: the person's own key, else the one
- * included with Cloud Pro. Settings' own-key flows read cfg.tts.key instead. */
+/** The ElevenLabs credential in use: the person's own key. */
 const elevenLabs = (cfg: AppConfig) => voiceCredential(cfg.tts?.key);
 
 export function voiceProvider(cfg: AppConfig): VoiceProvider {
@@ -72,11 +71,9 @@ export function voiceReady(cfg: AppConfig, voiceId?: string): boolean {
 
 /** What the settings panel needs. Never includes the key — same write-only
  * rule as every other credential. baseUrl and model are Chatterbox
- * settings, not credentials, so they come back in full. `included` says the
- * voice is Cloud Pro's, not a saved key. */
+ * settings, not credentials, so they come back in full. */
 export function describeVoice(cfg: AppConfig) {
   const provider = voiceProvider(cfg);
-  const included = provider === "elevenlabs" && elevenLabs(cfg)?.included === true;
   return {
     configured: providerConfigured(cfg),
     ready: voiceConfigured(cfg),
@@ -84,7 +81,6 @@ export function describeVoice(cfg: AppConfig) {
     provider,
     baseUrl: provider === "chatterbox" ? (cfg.tts?.baseUrl ?? "") : "",
     model: provider === "chatterbox" ? (cfg.tts?.model ?? "") : "",
-    ...(included ? { included: true as const } : {}),
   };
 }
 

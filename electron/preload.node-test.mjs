@@ -101,7 +101,7 @@ test("a transient subscription cannot consume a cold-start action before the act
   unsubscribe();
 });
 
-test("native Settings requests accept only the fixed organisation section, Cloud link and plain Cloud settings", () => {
+test("native Settings requests accept only the organisation section", () => {
   const calls = [];
   const unsubscribe = exposed.api.onOpenAppSettings(section => calls.push(section));
   emit("app:open-settings", "organization");
@@ -112,20 +112,6 @@ test("native Settings requests accept only the fixed organisation section, Cloud
   emit("app:open-settings", "openmausbot://cloud");
   emit("app:open-settings", { section: "organization", url: "https://other.example" });
   emit("app:open-settings", ["cloud"]);
-  assert.deepEqual(calls, ["organization", "cloud", "cloud-settings", undefined, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(calls, ["organization", undefined, undefined, undefined, undefined, undefined, undefined, undefined]);
   unsubscribe();
-});
-
-test("a Cloud link arriving before React subscriptions is delivered exactly once after mount", async () => {
-  emit("app:open-settings", "https://other.example");
-  emit("app:open-settings", "cloud");
-  const calls = [];
-  const unsubscribe = exposed.api.onOpenAppSettings(section => calls.push(section));
-  await Promise.resolve();
-  assert.deepEqual(calls, ["cloud"]);
-  unsubscribe();
-  const late = exposed.api.onOpenAppSettings(section => calls.push(section));
-  await Promise.resolve();
-  assert.deepEqual(calls, ["cloud"], "later subscriptions must not reopen Settings");
-  late();
 });

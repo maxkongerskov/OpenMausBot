@@ -4,7 +4,7 @@
 // the app booted in no matter what the picker says.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { setLocale } from "@/lib/i18n";
 import { StoreProvider } from "@/state/store";
@@ -16,12 +16,6 @@ beforeAll(() => {
   // the skin picker reads the attribute main.tsx stamps before first paint
   (globalThis as { document?: unknown }).document ??= { documentElement: { dataset: {} } };
 });
-
-// Analytics boots PostHog on import, which wants a real browser.
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  setAnalyticsEnabled: () => {},
-}));
 
 async function renderSettings(): Promise<string> {
   const { SettingsModal } = await import("./SettingsModal");

@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cloudHomePlaceRefusal } from "./cloud-home.ts";
 import { computerKindForResource, ManagedDesktopPolicy, mcpEntryMatches, parseManagedPolicy, type ManagedPolicy } from "./managed-policy.ts";
 
 const policies: ManagedDesktopPolicy[] = [];
@@ -134,8 +133,7 @@ describe("organisation desktop policy overlay", () => {
 });
 
 // Every computer claim in index.ts goes through bindTurnComputer. Run its
-// actual guard (not a copy), and the refusal it asks, against a synthetic
-// policy and, for an OMB Cloud home, the Cloud home switch.
+// actual guard (not a copy), and the refusal it asks, against a synthetic policy.
 describe("claim-time computer refusal in bindTurnComputer", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const start = source.indexOf("\nasync function bindTurnComputer(");
@@ -144,13 +142,13 @@ describe("claim-time computer refusal in bindTurnComputer", () => {
   const refusalStart = source.indexOf("\nfunction computerPlaceRefusal(");
   const refusal = source.slice(refusalStart + 1, source.indexOf("\n}\n", refusalStart) + 3);
   const code = ts.transpileModule(refusal + guard, { compilerOptions: { target: ts.ScriptTarget.ESNext } }).outputText;
-  const bind = (managedPolicy: ManagedDesktopPolicy, cloudHome = false) =>
-    new Function("managedPolicy", "computerKindForResource", "CLOUD_HOME", "cloudHomePlaceRefusal", `${code}; return bindTurnComputer;`)(
-      managedPolicy, computerKindForResource, cloudHome ? { machineId: "fixture" } : null, cloudHomePlaceRefusal,
+  const bind = (managedPolicy: ManagedDesktopPolicy) =>
+    new Function("managedPolicy", "computerKindForResource", `${code}; return bindTurnComputer;`)(
+      managedPolicy, computerKindForResource,
     ) as (owner: unknown, resource: string) => Promise<string>;
 
   it("refuses a disallowed kind before claiming anything", async () => {
-    expect(start).toBeGreaterThan(0); expect(guardEnd).toBeGreaterThan(start);
+    expect(start).toBeGreaterThan(0); expect(guardEnd).toBeGreaterThan(start); expect(refusalStart).toBeGreaterThan(0);
     const { managed } = overlay(policy({ computers: { thisComputer: false, localVm: true, box: true, vps: false } }));
     const bindTurnComputer = bind(managed);
     await expect(bindTurnComputer({}, "computer:host")).rejects.toThrow("Fixture Agency does not allow bots to use this computer.");
@@ -158,18 +156,5 @@ describe("claim-time computer refusal in bindTurnComputer", () => {
     await expect(bindTurnComputer({}, "computer:vm:shared")).resolves.toBe("claimed");
     managed.apply(null);
     await expect(bindTurnComputer({}, "computer:host")).resolves.toBe("claimed");
-  });
-
-  it("refuses this computer and a Local VM on an OMB Cloud home, and nothing else", async () => {
-    expect(refusalStart).toBeGreaterThan(0);
-    const { managed } = overlay(null);
-    const bindTurnComputer = bind(managed, true);
-    await expect(bindTurnComputer({}, "computer:host")).rejects.toThrow(cloudHomePlaceRefusal("local"));
-    await expect(bindTurnComputer({}, "computer:vm:shared")).rejects.toThrow(cloudHomePlaceRefusal("vm"));
-    await expect(bindTurnComputer({}, "computer:box:bx_1")).resolves.toBe("claimed");
-    await expect(bindTurnComputer({}, "computer:vps:alias:bot")).resolves.toBe("claimed");
-    // The same guard on any other server claims both.
-    await expect(bind(managed)({}, "computer:host")).resolves.toBe("claimed");
-    await expect(bind(managed)({}, "computer:vm:shared")).resolves.toBe("claimed");
   });
 });

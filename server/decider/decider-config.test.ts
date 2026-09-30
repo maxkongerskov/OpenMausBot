@@ -1,12 +1,12 @@
 import { readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   DATA_DIR, loadConfig, parseConfigPatch, parseStoredConfig, providerReloadKeys, saveConfig, stripWorkspaceCredentialEnv, syncCredentialEnv,
 } from "../config.ts";
-import { createDecider, deciderSavePatch, describeDecider } from "./index.ts";
+import { deciderSavePatch, describeDecider } from "./index.ts";
 
 const KEY = "tsk_config_secret_0123456789";
 
@@ -26,29 +26,6 @@ describe("decider config", () => {
     const childEnv: Record<string, string | undefined> = { OMB_JEV_API_KEY: KEY, OMB_CLOUD_DECIDER_TOKEN: "omb_decide_included", PATH: "/usr/bin" };
     stripWorkspaceCredentialEnv(childEnv);
     expect(childEnv).toEqual({ PATH: "/usr/bin" });
-  });
-
-  it("on Cloud Pro, a key in the environment is the person's own and wins over the included decisions", async () => {
-    const relay = "https://cloud.example.test/api/cloud/services/decider";
-    vi.stubEnv("OMB_CLOUD_DECIDER_URL", relay);
-    vi.stubEnv("OMB_CLOUD_DECIDER_TOKEN", "omb_decide_included");
-    try {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ answers: { answer: { type: "noul", noul: 0.9 } } })));
-      const decider = createDecider({ config: loadConfig, fetch: fetchImpl });
-      // no own key: the relay, with the included token
-      expect(describeDecider(loadConfig())).toMatchObject({ configured: true, included: true, enabled: true });
-      await decider.testKey();
-      // the desktop hands the saved key over as env: now it is the one in use
-      process.env.OMB_JEV_API_KEY = KEY;
-      saveConfig({ decider: { enabled: true } });
-      expect(describeDecider(loadConfig())).toEqual({ provider: "jev", configured: true, enabled: true, jobs: { roomRouting: true } });
-      await decider.testKey();
-      const calls = fetchImpl.mock.calls.map(([url, init]) => [String(url), (init!.headers as Record<string, string>).authorization]);
-      expect(calls).toEqual([[`${relay}/v1/systemone`, "Bearer omb_decide_included"], ["https://api.typesafe.ai/v1/systemone", `Bearer ${KEY}`]]);
-      expect(readFileSync(join(DATA_DIR, "config.json"), "utf8")).not.toContain("omb_decide_included");
-    } finally {
-      vi.unstubAllEnvs();
-    }
   });
 
   it("the env key wins over the file, and a save keeps the env in step", () => {

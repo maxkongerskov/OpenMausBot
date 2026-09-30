@@ -12,7 +12,6 @@ function profile(overrides: Partial<CatalogProfile> = {}): CatalogProfile {
     skillAuthoring: false,
     sharedComputers: false,
     voiceNotes: false,
-    cloudHome: false,
     botId: WATCHER_OPTIONS_CARD_BOT_ID,
     ...overrides,
   };

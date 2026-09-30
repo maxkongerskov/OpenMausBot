@@ -29,7 +29,7 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: store.state, dispatch: vi.fn() }),
   useStreaming: () => ({ streaming: {} }),
 }));
-vi.mock("@/lib/analytics", () => ({ emailGateDone: () => false }));
+vi.mock("@/lib/email-gate", () => ({ emailGateDone: () => false }));
 vi.mock("./Spotlight", () => ({ Spotlight: () => null }));
 import { FirstConversationTour } from "./FirstConversationTour";
 import { Spotlight } from "./Spotlight";

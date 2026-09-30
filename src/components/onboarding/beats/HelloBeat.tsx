@@ -1,12 +1,12 @@
 // Beat 1: who you are. Name and email go to the workspace profile (the
-// sidebar footer reads them back) and to analytics identity. Both optional;
-// "Maybe later" moves on without either.
+// sidebar footer reads them back). Both optional; "Maybe later" moves on
+// without either.
 //
 // A hosted team workspace asks for neither: its profile is shared by
 // everyone who signs in there, and the email field is a mailing-list offer
 // for people installing the app. It only says what the workspace is.
 import { useRef, useState } from "react";
-import { identifyEmail, track } from "@/lib/analytics";
+
 import { t } from "@/lib/i18n";
 import { api, useStore } from "@/state/store";
 import { inputClass, PrimaryButton, QuietButton, staggerIndex, type BeatProps } from "./shared";
@@ -35,7 +35,6 @@ export function HelloBeat({ onNext, onSkip, hosted = false }: BeatProps & { host
         signal: AbortSignal.timeout(10_000),
       });
       dispatch({ type: "configStatus", config });
-      identifyEmail(trimmedEmail);
       onNext();
     } catch {
       setFailed(true);
@@ -88,10 +87,7 @@ export function HelloBeat({ onNext, onSkip, hosted = false }: BeatProps & { host
         {t("onboarding.continue")}
       </PrimaryButton>
       <QuietButton
-        onClick={() => {
-          track("email_skipped");
-          onSkip();
-        }}
+        onClick={onSkip}
         className="animate-rise mt-3"
         style={staggerIndex(4)}
       >

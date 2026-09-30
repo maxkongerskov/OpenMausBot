@@ -7,7 +7,7 @@
 // the hint list.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hintSeenPatch, welcomeDue } from "@/lib/onboarding";
-import { emailGateDone } from "@/lib/analytics";
+import { emailGateDone } from "@/lib/email-gate";
 import { currentStep } from "@/lib/guided-tour";
 import { anchorFor, nextSpotlight, placementFor, tourComplete, type ChatObservation, type SpotlightId } from "@/lib/first-conversation";
 import { t } from "@/lib/i18n";

@@ -5,7 +5,6 @@ import { setLocale } from "@/lib/i18n";
 
 const store = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/state/store", () => ({ api: store.api, useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
-vi.mock("@/lib/analytics", () => ({ identifyEmail: vi.fn(), track: vi.fn() }));
 import { HelloBeat } from "./HelloBeat";
 
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void }>;

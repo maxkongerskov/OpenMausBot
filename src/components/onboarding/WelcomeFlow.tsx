@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { MausAvatar } from "@/components/Avatar";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
-import { setEmailGateDone, track } from "@/lib/analytics";
+import { setEmailGateDone } from "@/lib/email-gate";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -72,7 +72,6 @@ type Motion = Exclude<MausMotion, "none">;
 export function WelcomeFlow({
   bot,
   onDone,
-  replay = false,
   initialBeat,
   embedded = false,
   reel = true,
@@ -84,8 +83,6 @@ export function WelcomeFlow({
   /** The seeded bot the exit beat names; null when the roster is empty. */
   bot: Bot | null;
   onDone: () => void;
-  /** Replays skip nothing but are tracked separately. */
-  replay?: boolean;
   /** Open on a given beat: the preview, and resuming after the engines beat
    * sent the person to Settings → Organisation. */
   initialBeat?: BeatId;
@@ -123,10 +120,6 @@ export function WelcomeFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    track("onboarding_step", { step: beat, replay });
-  }, [beat, replay]);
-
   /** Move to another beat. The View Transitions API snapshots the old card,
    * applies the state change synchronously, then animates named elements to
    * their new place; without it (or under reduced motion) the swap is instant. */
@@ -142,10 +135,9 @@ export function WelcomeFlow({
   );
 
   const finish = useCallback(
-    async (reason: "completed" | "skipped") => {
+    async () => {
       if (finishing.current) return;
       finishing.current = true;
-      track("onboarding_completed", { reason, at: beat, replay });
       // one release of the old browser-side gate, so a downgrade stays quiet
       setEmailGateDone("submitted");
       // A slow/offline server must not trap the user behind the welcome card.
@@ -158,21 +150,21 @@ export function WelcomeFlow({
         // closes the tour; it comes back next launch, which is the honest state
       }
     },
-    [beat, dispatch, onDone, replay],
+    [dispatch, onDone],
   );
 
   const next = nextBeat(beats, beat);
   const previous = previousBeat(beats, beat);
   const advance = useCallback(() => {
     if (next) go(next);
-    else void finish("completed");
+    else void finish();
   }, [next, go, finish]);
 
   // Escape skips the tour; Tab stays inside the card.
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      void finish("skipped");
+      void finish();
       return;
     }
     if (event.key !== "Tab" || !cardRef.current) return;
@@ -230,7 +222,7 @@ export function WelcomeFlow({
         className="welcome-card relative flex max-h-full w-full flex-col overflow-y-auto rounded-2xl border border-hairline/40 bg-panel p-5 sm:p-8 shadow-[0_30px_80px_-28px_rgba(0,0,0,0.45),0_8px_24px_-12px_rgba(0,0,0,0.25)] outline-none"
         style={{ maxWidth: beatWidth(beat) }}
       >
-        <QuietButton onClick={() => void finish("skipped")} className="absolute right-4 top-4">
+        <QuietButton onClick={() => void finish()} className="absolute right-4 top-4">
           {t("onboarding.skipTour")}
         </QuietButton>
 
@@ -266,7 +258,7 @@ export function WelcomeFlow({
           {beat === "bot" && (
             <MeetYourBotBeat
               bot={bot}
-              onFinish={() => void finish("completed")}
+              onFinish={() => void finish()}
               setMascot={setMascot}
               bump={bump}
             />

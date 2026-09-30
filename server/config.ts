@@ -16,7 +16,6 @@ import type { McpServerSpec } from "./contracts.ts";
 import { isRemoteMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { CLOUD_SEAT_IDLE_STOP_MS } from "./cloud-overflow.ts";
-import { cloudHomeConfigured } from "./cloud-home.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -807,12 +806,9 @@ export function routinesInConversationEnabled(cfg: AppConfig): boolean {
 
 /** Workspace-level gate for the experimental built-in browser. A bot's own
  * switch sits under it, so either can withhold the browser. Off until the
- * desktop's first-run welcome turns it on. A Cloud home (cloud-home.ts)
- * skips that welcome, ships the browser in its image and has no other screen
- * of its own, so there it is on unless the person switched it off. */
-export function builtInBrowserEnabled(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): boolean {
-  const chosen = cfg.features?.browser;
-  return chosen === undefined ? cloudHomeConfigured(env) : chosen === true;
+ * desktop's first-run welcome turns it on. */
+export function builtInBrowserEnabled(cfg: AppConfig): boolean {
+  return cfg.features?.browser === true;
 }
 
 /** Opt-in computer sharing: the routes, the agent tools, the advertised

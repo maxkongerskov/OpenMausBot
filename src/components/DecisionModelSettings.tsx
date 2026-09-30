@@ -2,9 +2,7 @@
 // the server reports configured-or-not, never the value), and one switch per
 // thing it decides. Saving a key turns it on; there is no confirm step. The
 // packaged desktop keeps the key in its OS-encrypted store; elsewhere it goes
-// to the server's own 0600 config, like every other workspace key. On a Cloud
-// Pro home Jev is included: it works with no key, there is nothing to clear,
-// and a key pasted here replaces it.
+// to the server's own 0600 config, like every other workspace key.
 import { useState } from "react";
 import { Check, ExternalLink, Loader2 } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
@@ -28,18 +26,8 @@ const FAILURES: Record<string, LocaleKey> = {
   misconfigured: "decider.error.misconfigured",
 };
 
-/** A test of Cloud Pro's included decisions has no key to check at
- * typesafe.ai: its relay refuses a subscription that is not active (402) and
- * a month's decisions that are used up (429). */
-const INCLUDED_FAILURES: Record<string, LocaleKey> = {
-  rejected: "decider.included.error.rejected",
-  rate_limited: "decider.included.error.limited",
-};
-
 /** A fixed sentence per failure: the vendor's own body never reaches the UI. */
-export function deciderFailureText(result: { reason: string; status?: number }, included = false): string {
-  if (included && result.reason === "http_error" && result.status === 402) return t("decider.included.error.subscription");
-  if (included && INCLUDED_FAILURES[result.reason]) return t(INCLUDED_FAILURES[result.reason]!);
+export function deciderFailureText(result: { reason: string; status?: number }): string {
   if (result.reason === "http_error") return t("decider.error.http", { status: String(result.status ?? "?") });
   const key = FAILURES[result.reason];
   return key ? t(key) : t("decider.error.other");
@@ -53,9 +41,7 @@ export function DecisionModelSettings() {
   const { state, dispatch } = useStore();
   const decider = state.config?.decider;
   const configured = decider?.configured ?? false;
-  // Cloud Pro's decisions, with no key saved: nothing to clear or replace.
-  const included = configured && decider?.included === true;
-  const ownKey = configured && !included;
+  const ownKey = configured;
   const enabled = decider?.enabled ?? false;
   const roomRouting = decider?.jobs.roomRouting ?? true;
   const [value, setValue] = useState("");
@@ -105,14 +91,11 @@ export function DecisionModelSettings() {
     setTesting(true);
     setVerdict(null);
     setError(null);
-    // With no draft, the server tests what is in use: Cloud Pro's included
-    // decisions go through the Admin's relay, never to Jev directly.
-    const testingIncluded = !draft && included;
     try {
       const result = await api<TestResult>("/api/decider/test", { method: "POST", body: JSON.stringify(draft ? { key: draft } : {}) });
       setVerdict(result.ok
         ? { ok: true, text: t("decider.test.ok", { ms: String(result.latencyMs) }) }
-        : { ok: false, text: deciderFailureText(result, testingIncluded) });
+        : { ok: false, text: deciderFailureText(result) });
     } catch (cause) {
       setVerdict({ ok: false, text: cause instanceof Error ? cause.message : String(cause) });
     } finally {
@@ -140,7 +123,7 @@ export function DecisionModelSettings() {
         <div role="status" className="mb-2 flex items-center gap-2 text-[13px] text-ink-secondary">
           <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
           <span className={configured ? "text-success" : undefined}>
-            {included ? t("keys.includedWithCloudPro") : configured ? t("decider.status.connected") : t("decider.status.notConnected")}
+            {configured ? t("decider.status.connected") : t("decider.status.notConnected")}
           </span>
         </div>
         <div className="flex gap-2">

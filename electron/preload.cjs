@@ -15,10 +15,8 @@ ipcRenderer.on("package:install", (_event, url) => {
 });
 
 // Main can finish loading the document before React subscribes. Retain only
-// the fixed actions (Organisation, the openmausbot://cloud link, and plain
-// Settings → OMB Cloud from the lending menu-bar item), never a destination
-// supplied by a renderer.
-const FIXED_SETTINGS_ACTIONS = new Set(["organization", "cloud", "cloud-settings"]);
+// the organisation action, never a destination supplied by a renderer.
+const FIXED_SETTINGS_ACTIONS = new Set(["organization"]);
 let pendingSettingsAction = null;
 const appSettingsListeners = new Set();
 ipcRenderer.on("app:open-settings", (_event, section) => {
@@ -35,9 +33,7 @@ ipcRenderer.on("app:open-settings", (_event, section) => {
 // helpers here. Main enforces the same rule on the sensitive channels.
 const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origin="))?.slice("--omb-local-origin=".length) ?? null;
 const isLocalPage = !localOrigin || location.origin === localOrigin;
-// cloudMove: main answers it on a remote page only when that page is the
-// person's own verified Cloud in this window (Move to Cloud's suggestion card).
-const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudMove"]);
+const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces"]);
 
 // Sandboxed preload cannot import TS or sibling modules. Keep this list in
 // parity with shared/workspace-backup-client.ts (covered by the preload test).
@@ -291,44 +287,6 @@ const bridge = {
       return () => ipcRenderer.removeListener("workspaces:open-settings", handler);
     },
   },
-  cloudAccount: process.argv.includes("--omb-company-desktop=1") ? {
-    state: () => ipcRenderer.invoke("cloud-account:state"),
-    begin: () => ipcRenderer.invoke("cloud-account:begin"),
-    reopen: () => ipcRenderer.invoke("cloud-account:reopen"),
-    cancel: () => ipcRenderer.invoke("cloud-account:cancel"),
-    refresh: () => ipcRenderer.invoke("cloud-account:refresh"),
-    signOut: () => ipcRenderer.invoke("cloud-account:signOut"),
-    openDashboard: () => ipcRenderer.invoke("cloud-account:openDashboard"),
-    connectHome: () => ipcRenderer.invoke("cloud-account:connectHome"),
-    onState: cb => {
-      const handler = (_event, state) => cb(state);
-      ipcRenderer.on("cloud-account:state-changed", handler);
-      return () => ipcRenderer.removeListener("cloud-account:state-changed", handler);
-    },
-    // "Let my Cloud use this Mac": main decides the Cloud; no argument names it.
-    lending: {
-      state: () => ipcRenderer.invoke("lending:state"),
-      chooseFolder: () => ipcRenderer.invoke("lending:folder"),
-      save: input => ipcRenderer.invoke("lending:save", input),
-      stop: () => ipcRenderer.invoke("lending:stop"),
-    },
-  } : undefined,
-  /** Move to Cloud: this computer's workspace to the person's Cloud home.
-   * No arguments reach main. A remote page may start a move only from the
-   * person's own click. */
-  cloudMove: process.argv.includes("--omb-company-desktop=1") ? {
-    state: () => ipcRenderer.invoke("cloud-move:state"),
-    start: () => isLocalPage || navigator.userActivation?.isActive === true
-      ? ipcRenderer.invoke("cloud-move:start") : Promise.reject(new Error("Choose Move to start moving.")),
-    cancel: () => ipcRenderer.invoke("cloud-move:cancel"),
-    restorePrevious: () => ipcRenderer.invoke("cloud-move:restore-previous"),
-    dismiss: () => ipcRenderer.invoke("cloud-move:dismiss"),
-    onState: cb => {
-      const handler = (_event, state) => cb(state);
-      ipcRenderer.on("cloud-move:state-changed", handler);
-      return () => ipcRenderer.removeListener("cloud-move:state-changed", handler);
-    },
-  } : undefined,
   organization: process.argv.includes("--omb-company-desktop=1") ? {
     settingsOpened: () => ipcRenderer.invoke("organization:settings-opened"),
     state: () => ipcRenderer.invoke("organization:state"),

@@ -3,7 +3,6 @@
 // is why skipping here costs nothing.
 import { useEffect } from "react";
 import { PhoneSetupFlow } from "@/components/PhoneSetupFlow";
-import { track } from "@/lib/analytics";
 import { useStore } from "@/state/store";
 import type { BeatProps } from "./shared";
 
@@ -20,12 +19,8 @@ export function PhoneBeat({ onNext, onSkip, setMascot, bump }: BeatProps) {
         variant="onboarding"
         compactHeader
         profileEmail={state.config?.profile?.email ?? ""}
-        onSkip={() => {
-          track("phone_setup_skipped");
-          onSkip();
-        }}
+        onSkip={onSkip}
         onComplete={() => {
-          track("phone_setup_completed");
           bump("celebrate");
           onNext();
         }}

@@ -89,9 +89,7 @@ connections or directly invoke switching, forgetting, or host-only controls.
 
 ## Optional computer sharing
 
-**Computer sharing is disabled by default.** The exception is lending a Mac
-to the person's own OMB Cloud home, which has its own switch and gate; see
-`docs/cloud-pro.md`, "Let my Cloud use this Mac".
+**Computer sharing is disabled by default.**
 Connecting and switching hosted workspaces still works, but does not offer
 local file, terminal, or screen access. The flow below is maintainer-only
 verification with `features.sharedComputers: true` on both servers, not a

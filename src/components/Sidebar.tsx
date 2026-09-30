@@ -1,4 +1,3 @@
-import { track } from "@/lib/analytics";
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { approvalCardOutcome } from "./ApprovalCard";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -479,7 +478,6 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       name: name.trim() || undefined,
       section: section.trim() || undefined,
     });
-    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
     onClose();
   };
   return (

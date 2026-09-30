@@ -20,7 +20,7 @@ vi.mock("react", async (original) => ({
 }));
 const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, dispatch: vi.fn(), api: vi.fn() }));
 vi.mock("@/state/store", () => ({ api: store.api, useStore: () => ({ state: store.state, dispatch: store.dispatch }) }));
-vi.mock("@/lib/analytics", () => ({ emailGateDone: () => false }));
+vi.mock("@/lib/email-gate", () => ({ emailGateDone: () => false }));
 // The gate's job is choosing; the flow itself has its own recipe.
 vi.mock("./WelcomeFlow", () => ({ WelcomeFlow: () => null }));
 vi.mock("@/components/Avatar", () => ({ MausAvatar: () => null }));
@@ -81,7 +81,7 @@ describe("who gets the welcome flow", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
     const { tree } = gate(LOCAL_VIEWER);
     expect(tree?.type).toBe(WelcomeFlow);
-    expect(tree?.props).toMatchObject({ hosted: false, initialBeat: undefined, replay: false });
+    expect(tree?.props).toMatchObject({ hosted: false, initialBeat: undefined });
   });
 
   it("opens the hosted beat set for a hosted workspace's admin", () => {
@@ -90,7 +90,7 @@ describe("who gets the welcome flow", () => {
     expect(tree?.props.hosted).toBe(true);
   });
 
-  it("leaves an OMB Cloud home's first run to its engine sign-in", () => {
+  it("skips the welcome flow when the server reports a Cloud home", () => {
     vi.stubGlobal("window", REMOTE_PAGE);
     expect(gate({ hosted: false, canSave: true, cloudHome: true }).tree).toBeNull();
     // Settings → Replay welcome tour still opens it there
@@ -147,7 +147,7 @@ describe("who gets the welcome flow", () => {
     store.state = { ...store.state, welcomeOpen: true };
     const replay = gate({ hosted: false, canSave: false }).tree!;
     expect(replay.type).toBe(WelcomeFlow);
-    expect(replay.props).toMatchObject({ hosted: false, replay: true });
+    expect(replay.props).toMatchObject({ hosted: false });
   });
 
   it("treats a hosted workspace opened inside the desktop app like a browser", () => {
@@ -169,18 +169,6 @@ describe("who gets the welcome flow", () => {
     store.state = { ...store.state, config: { onboarding: { ...EMPTY_ONBOARDING, completedAt: "2026-09-23T00:00:00.000Z", version: WELCOME_VERSION } } };
     expect(gate({ hosted: true, canSave: true }).tree).toBeNull();
     expect(gate(LOCAL_VIEWER).tree).toBeNull();
-  });
-
-  it("steps aside for OMB Cloud opened by the Cloud link, not for a normal visit there", () => {
-    vi.stubGlobal("window", LOCAL_PAGE);
-    store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "cloudAccount", appSettingsCloudLink: 0 };
-    expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
-    store.state = { ...store.state, appSettingsCloudLink: 1 };
-    expect(gate(LOCAL_VIEWER).tree).toBeNull();
-    store.state = { ...store.state, appSettingsSection: "general" };
-    expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
-    store.state = { ...store.state, appSettingsOpen: false, appSettingsSection: "cloudAccount" };
-    expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
   });
 
   it("resumes on the engines beat after the organisation row opens Settings", () => {

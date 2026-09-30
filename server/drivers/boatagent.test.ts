@@ -432,81 +432,14 @@ describe("BoatAgentDriver turns (fake API)", () => {
   });
 });
 
-// Cloud Pro includes Boat through the Admin's relay. The person's own token
-// wins and goes only to Boat; without one, the included token goes only to the
-// relay. The public model catalog follows the API in use too.
-describe("BoatAgentDriver credential and base URL", () => {
-  const RELAY = "https://cloud.example.test/api/cloud/services/boat/api/box/v1";
-  const INCLUDED = "box_omb_included-relay-token";
-  let seen: Array<{ url: string; auth: string | null }> = [];
-  let instance: ProviderInstance | undefined;
-  let recorder: EventRecorder | undefined;
-  let restoreFetch: () => void = () => {};
-
-  beforeEach(() => {
+describe("BoatAgentDriver credential", () => {
+  it("is unavailable without the person's own Boat token", async () => {
     ensureDirs();
     vi.stubEnv("BOX_TOKEN", undefined);
-    vi.stubEnv("OMB_BOX_API", undefined);
-    vi.stubEnv("OMB_CLOUD_BOAT_URL", RELAY);
-    vi.stubEnv("OMB_CLOUD_BOAT_TOKEN", INCLUDED);
-    seen = [];
-    const previous = globalThis.fetch;
-    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = String(init?.method ?? "GET").toUpperCase();
-      seen.push({ url, auth: new Headers(init?.headers).get("authorization") });
-      if (url.endsWith("/api/provider-models")) return json({ "claude-code": { models: [{ id: "claude-fable-5" }] } });
-      if (url.endsWith("/me")) return json({ ok: true });
-      if (method === "POST" && /\/boxes\/[^/]+\/prompt$/.test(url)) return json({ promptRun: { id: PROMPT } });
-      if (url.includes("/events")) return json({ events: [{ id: "e1", type: "response", text: "done" }] });
-      if (url.includes(`/prompts/${PROMPT}`)) return json({ promptRun: { status: "finished", result: "done" } });
-      return json({ error: `unexpected ${method} ${url}` }, 404);
-    }) as typeof fetch;
-    restoreFetch = () => {
-      globalThis.fetch = previous;
-    };
-  });
-
-  afterEach(async () => {
-    recorder?.stop();
-    await instance?.dispose();
-    instance = undefined;
-    restoreFetch();
+    vi.stubEnv("OMB_CLOUD_BOAT_TOKEN", "box_omb_included-relay-token");
+    const created = await BoatAgentDriver.create({ instanceId: "computer", displayName: "Computer", environment: {}, enabled: true, config: { pollMs: 0 } });
+    expect(await created.snapshot()).toMatchObject({ state: "unavailable" });
+    await created.dispose();
     vi.unstubAllEnvs();
-  });
-
-  const runTurn = async (environment: Record<string, string>, threadId: string) => {
-    recorder?.stop();
-    await instance?.dispose();
-    instance = await BoatAgentDriver.create({ instanceId: "computer", displayName: "Computer", environment, enabled: true, config: { pollMs: 0 } });
-    recorder = recordEvents(instance.adapter);
-    expect(await instance.snapshot()).toMatchObject({ state: "available" });
-    await instance.adapter.sendTurn({ threadId, text: "go", integrations: { computer } });
-    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
-  };
-
-  it("with no own token, uses the included one only through the relay, catalog included", async () => {
-    await runTurn({}, "t-included");
-    expect(seen.map((call) => call.url)).toContain("https://cloud.example.test/api/cloud/services/boat/api/provider-models");
-    expect(seen.map((call) => call.url)).toContain(`${RELAY}/boxes/${BOAT}/prompt`);
-    expect(seen.every((call) => call.url.startsWith("https://cloud.example.test/api/cloud/services/boat/"))).toBe(true);
-    expect(seen.filter((call) => call.auth).every((call) => call.auth === `Bearer ${INCLUDED}`)).toBe(true);
-  });
-
-  it("an own token wins and goes only to Boat, catalog included, even after the relay's catalog was loaded", async () => {
-    await runTurn({}, "t-included-first");
-    seen = [];
-    await runTurn({ BOX_TOKEN: "box_own" }, "t-own");
-    expect(seen.map((call) => call.url)).toContain("https://ascii.dev/api/provider-models");
-    expect(seen.map((call) => call.url)).toContain(`https://ascii.dev/api/box/v1/boxes/${BOAT}/prompt`);
-    expect(seen.every((call) => call.url.startsWith("https://ascii.dev/"))).toBe(true);
-    expect(seen.filter((call) => call.auth).every((call) => call.auth === "Bearer box_own")).toBe(true);
-  });
-
-  it("is unavailable with neither an own token nor an included one", async () => {
-    vi.stubEnv("OMB_CLOUD_BOAT_TOKEN", undefined);
-    instance = await BoatAgentDriver.create({ instanceId: "computer", displayName: "Computer", environment: {}, enabled: true, config: { pollMs: 0 } });
-    expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
-    expect(seen).toEqual([]);
   });
 });
